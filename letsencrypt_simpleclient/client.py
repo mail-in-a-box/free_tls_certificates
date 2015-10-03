@@ -9,85 +9,74 @@ import acme.client
 import acme.messages
 import acme.challenges
 
+
 ACME_SERVER = "https://acme-staging.api.letsencrypt.org/directory"
 ACCOUNT_KEY_SIZE = 2048
 EXPIRY_BUFFER_TIME = 60 * 60 * 24 * 2  # two days
 
 
-def main():
-    # Set this to the list of domain names for the certificate. The
-    # first will be the "common name" and the rest will be Subject
-    # Alternative Names names. The difference doesn't really matter.
-    # You can have just a single domain here.
-    domains = ["mailinabox.email", "www.mailinabox.email"]
+def simple_logger(s):
+    print(s)
 
-    account_key_file = 'le_account.pem'
-    registration_file = "le_registration.json"
-    challenges_file = "le_challenges.jsons"
-    certificate_file = "certificate.crt"
 
-    def simple_logger(s):
-        print(s)
+def issue_certificate(domains, account_cache_directory, certificate_file=None, logger=simple_logger,
+        agree_to_tos_url=None, private_key=None, csr=None):
+
+    account_key_file = os.path.join(account_cache_directory, 'account.pem')
+    registration_file = os.path.join(account_cache_directory, 'registration.json')
+    challenges_file = os.path.join(account_cache_directory, 'challenges.json')
 
     # Create the ACME client, making a new account & registration
     # if not set up yet.
-    try:
-        (client, regr, account) = create_client(account_key_file, registration_file, simple_logger)
-    except NeedToAgreeToTOS as e:
-        print("agreeing to TOS", e.url)
-        (client, regr, account) = create_client(account_key_file, registration_file, simple_logger, agree_to_tos_url=e.url)
+    (client, regr, account) = create_client(account_key_file, registration_file, logger, agree_to_tos_url=agree_to_tos_url)
 
     # Submit domain validation.
     challgs = []
     for domain in domains:
-        try:
-            challg = submit_domain_validation(client, regr, account, challenges_file, domain, simple_logger)
-            challgs.append(challg)
-        except NeedToInstallFile as e:
-            print("Install a file")
-            print("Location:", e.url)
-            print("Content Type:", e.content_type)
-            print("Contents:", e.contents)
-            return
-        except WaitABit as e:
-            print ("Try again in %s." % (e.until_when - datetime.datetime.now()))
-            return
+        challg = submit_domain_validation(client, regr, account, challenges_file, domain, logger)
+        challgs.append(challg)
 
     # Domains are now validated. Generate a CSR.
 
-    # Since this is an example, we'll generate a private key on the fly.
     from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
+    from cryptography.hazmat.primitives import serialization
 
-    # To save it in PEM format (but for this test we don't need to save it):
-    #
-    # with open(keyfile, 'wb') as f:
-    #   f.write(key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL)))
-    #
-    # If you already have a private key but not a CSR, load it like this:
-    #
-    # with open(keyfile, 'rb') as f:
-    #   key = serialization.load_pem_private_key(f.read(), password=None, backend=default_backend())
+    if private_key is None:
+        # Generate a new private key if not given to us.
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
+        private_key_pem = private_key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL)
+    elif isinstance(private_key, bytes):
+        # Deserialize.
+        private_key_pem = private_key
+        private_key = serialization.load_pem_private_key(private_key, password=None, backend=default_backend())
 
     # Create a CSR, if you don't have one already.
-    csr = generate_csr(domains, key)
-
-    # Or if you already have a CSR, load it now in PEM format:
-    #
-    # with open(csrfile, 'rb') as f:
-    #   csr = f.read()
-    # csr = OpenSSL.crypto.load_certificate_request(OpenSSL.crypto.FILETYPE_PEM, csr)
+    if csr is None:
+        (csr_pem, csr) = generate_csr(domains, private_key)
+    elif isinstance(csr, bytes):
+        # TODO: Validate that the CSR specifies exactly the
+        # same domains as the domains array.
+        import OpenSSL.crypto
+        csr_pem = csr
+        csr = OpenSSL.crypto.load_certificate_request(OpenSSL.crypto.FILETYPE_PEM, csr_pem)
 
     # Request a certificate using the CSR and some number of domain validation challenges.
     cert_response = client.request_issuance(csr, challgs)
 
     # cert_response.body now holds a OpenSSL.crypto.X509 object. Convert it to
-    # PEM format and save:
+    # PEM format.
     import OpenSSL.crypto
     cert_pem = OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, cert_response.body)
-    with open(certificate_file, 'wb') as f:
-        f.write(cert_pem)
+
+    if certificate_file is not None:
+        with open(certificate_file, 'wb') as f:
+            f.write(cert_pem)
+
+    return (
+        private_key_pem,
+        csr_pem,
+        cert_pem)
 
 
 class NeedToAgreeToTOS(Exception):
@@ -349,13 +338,10 @@ def generate_csr(domains, key):
     # Generates a CSR and returns a OpenSSL.crypto.X509Req object.
     from cryptography.hazmat.primitives import serialization
     csr = generate_csr_pyca(domains, key)
-    csr = csr.public_bytes(serialization.Encoding.PEM)  # put into PEM format (bytes)
+    csr_pem = csr.public_bytes(serialization.Encoding.PEM)  # put into PEM format (bytes)
 
     # Convert the CSR in PEM format to an OpenSSL.crypto.X509Req object.
     import OpenSSL.crypto
-    csr = OpenSSL.crypto.load_certificate_request(OpenSSL.crypto.FILETYPE_PEM, csr)
-    return csr
+    csr = OpenSSL.crypto.load_certificate_request(OpenSSL.crypto.FILETYPE_PEM, csr_pem)
+    return (csr_pem, csr)
 
-
-if __name__ == "__main__":
-    main()
