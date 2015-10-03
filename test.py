@@ -1,4 +1,7 @@
-from letsencrypt_simpleclient.client import issue_certificate, NeedToAgreeToTOS, NeedToInstallFile, WaitABit
+import requests.exceptions
+import acme.messages
+
+from letsencrypt_simpleclient.client import issue_certificate, NeedToAgreeToTOS, NeedToInstallFile, NeedToTakeAction, WaitABit
 
 # Set this to the list of domain names for the certificate. The
 # first will be the "common name" and the rest will be Subject
@@ -13,6 +16,7 @@ def do_issue():
         domains,
         "path/to/some/storage",
         certificate_file="certificate.crt",
+        certificate_chain_file="chain.crt", # optional, default is to append to certificate_file
         agree_to_tos_url=agree_to_tos)
 
 try:
@@ -22,11 +26,21 @@ try:
         print("Automatically agreeing to TOS at", e.url)
         agree_to_tos = e.url
         do_issue()
-except NeedToInstallFile as e:
-    print("Install a file")
-    print("Location:", e.url)
-    print("Content Type:", e.content_type)
-    print("Contents:", e.contents)
+except NeedToTakeAction as e:
+    for action in e.actions:
+        if isinstance(action, NeedToInstallFile):
+            print("Install a file!")
+            print("Location:", action.url)
+            print("Content Type:", action.content_type)
+            print("Contents:", action.contents)
+            print()
 except WaitABit as e:
     import datetime
-    print ("Try again in %s." % (e.until_when - datetime.datetime.now()))
+    print("Try again in %s." % (e.until_when - datetime.datetime.now()))
+except acme.messages.Error as e:
+    # A protocol error occurred. If a CSR was supplied, it might
+    # be for a different set of domains than was specified, for instance.
+    print("Somethig went wrong:", e)
+except requests.exceptions.RequestException as e:
+    # A DNS or network error occurred.
+    print("Somethig went wrong:", e)

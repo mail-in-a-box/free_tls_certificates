@@ -13,7 +13,10 @@ Prerequisites:
 
 Example::
 
-    from letsencrypt_simpleclient.client import issue_certificate, NeedToAgreeToTOS, NeedToInstallFile, WaitABit
+    import requests.exceptions
+    import acme.messages
+
+    from letsencrypt_simpleclient.client import issue_certificate, NeedToAgreeToTOS, NeedToInstallFile, NeedToTakeAction, WaitABit
 
     # Set this to the list of domain names for the certificate. The
     # first will be the "common name" and the rest will be Subject
@@ -30,15 +33,24 @@ Example::
             certificate_file="certificate.crt",
             agree_to_tos_url=agree_to_tos)
     except NeedToAgreeToTOS as e:
-        print("You need to agree to the TOS. Set this:")
+        print("You need to agree to the TOS. Set this on next run:")
         print("agree_to_tos =", repr(e.url))
-    except NeedToInstallFile as e:
-        print("Install a file")
-        print("Location:", e.url)
-        print("Content Type:", e.content_type)
-        print("Contents:", e.contents)
-        return
+    except NeedToTakeAction as e:
+        for action in e.actions:
+            if isinstance(action, NeedToInstallFile):
+                print("Install a file!")
+                print("Location:", action.url)
+                print("Content Type:", action.content_type)
+                print("Contents:", action.contents)
+                print()
     except WaitABit as e:
         import datetime
         print ("Try again in %s." % (e.until_when - datetime.datetime.now()))
-        return
+    except acme.messages.Error as e:
+        # A protocol error occurred. If a CSR was supplied, it might
+        # be for a different set of domains than was specified, for instance.
+        print("Somethig went wrong:", e)
+    except requests.exceptions.RequestException as e:
+        # A DNS or network error occurred.
+        print("Somethig went wrong:", e)
+

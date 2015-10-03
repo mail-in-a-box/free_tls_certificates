@@ -8,19 +8,31 @@ import time
 import acme.client
 import acme.messages
 import acme.challenges
-
+import OpenSSL.crypto
 
 ACME_SERVER = "https://acme-staging.api.letsencrypt.org/directory"
 ACCOUNT_KEY_SIZE = 2048
 EXPIRY_BUFFER_TIME = 60 * 60 * 24 * 2  # two days
 
 
+class APPEND_CHAIN:
+    pass
+APPEND_CHAIN = APPEND_CHAIN()
+
+
 def simple_logger(s):
-    print(s)
+    import sys
+    print(s, file=sys.stderr)
 
 
-def issue_certificate(domains, account_cache_directory, certificate_file=None, logger=simple_logger,
-        agree_to_tos_url=None, private_key=None, csr=None):
+def issue_certificate(
+        domains, account_cache_directory,
+        agree_to_tos_url=None, 
+        certificate_file=None,
+        certificate_chain_file=APPEND_CHAIN,
+        private_key=None, csr=None,
+        logger=simple_logger,
+        ):
 
     account_key_file = os.path.join(account_cache_directory, 'account.pem')
     registration_file = os.path.join(account_cache_directory, 'registration.json')
@@ -32,9 +44,29 @@ def issue_certificate(domains, account_cache_directory, certificate_file=None, l
 
     # Submit domain validation.
     challgs = []
+    need_actions = []
+    wait_until_when = None
     for domain in domains:
-        challg = submit_domain_validation(client, regr, account, challenges_file, domain, logger)
-        challgs.append(challg)
+        try:
+            # Try this domain's validation.
+            challg = submit_domain_validation(client, regr, account, challenges_file, domain, logger)
+            challgs.append(challg)
+        except NeedToInstallFile as e:
+            # Validation failed because the user needs to take action.
+            need_actions.append(e)
+        except WaitABit as e:
+            # Validation is pending and we're instructed not to poll
+            # until after a certain time. Remember the latest such
+            # time across the domains.
+            wait_until_when = max(wait_until_when or datetime.datetime.min, e.until_when)
+
+    # If any actions need to be taken, raise an exception with those actions.
+    if len(need_actions) > 0:
+        raise NeedToTakeAction(need_actions)
+
+    # If the validation is in progress and the user needs to wait, indicate that.
+    if wait_until_when is not None:
+        raise WaitABit(wait_until_when)
 
     # Domains are now validated. Generate a CSR.
 
@@ -43,9 +75,10 @@ def issue_certificate(domains, account_cache_directory, certificate_file=None, l
 
     if private_key is None:
         # Generate a new private key if not given to us.
+        logger("Generating a new private key.")
         from cryptography.hazmat.primitives.asymmetric import rsa
         private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
-        private_key_pem = private_key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL)
+        private_key_pem = private_key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL, encryption_algorithm=serialization.NoEncryption())
     elif isinstance(private_key, bytes):
         # Deserialize.
         private_key_pem = private_key
@@ -53,30 +86,50 @@ def issue_certificate(domains, account_cache_directory, certificate_file=None, l
 
     # Create a CSR, if you don't have one already.
     if csr is None:
+        logger("Generating a new certificate signing request.")
         (csr_pem, csr) = generate_csr(domains, private_key)
     elif isinstance(csr, bytes):
         # TODO: Validate that the CSR specifies exactly the
-        # same domains as the domains array.
-        import OpenSSL.crypto
+        # same domains as the domains array? Let's Encrypt
+        # will of course also check this for us.
         csr_pem = csr
         csr = OpenSSL.crypto.load_certificate_request(OpenSSL.crypto.FILETYPE_PEM, csr_pem)
 
     # Request a certificate using the CSR and some number of domain validation challenges.
+    logger("Requesting a certificate.")
     cert_response = client.request_issuance(csr, challgs)
 
-    # cert_response.body now holds a OpenSSL.crypto.X509 object. Convert it to
-    # PEM format.
-    import OpenSSL.crypto
-    cert_pem = OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, cert_response.body)
+    # Get the certificate chain.
+    chain = client.fetch_chain(cert_response)
+
+    # cert_response.body and chain now hold OpenSSL.crypto.X509 objects.
+    # Convert them to PEM format.
+    def cert_to_pem(cert):
+        return OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
+    cert_pem = cert_to_pem(cert_response.body)
+    chain = list(map(cert_to_pem, chain))
 
     if certificate_file is not None:
+        logger("Writing certificate to %s." % certificate_file)
         with open(certificate_file, 'wb') as f:
             f.write(cert_pem)
+            if certificate_chain_file == APPEND_CHAIN:
+                for cert in chain:
+                    f.write(cert)
 
-    return (
-        private_key_pem,
-        csr_pem,
-        cert_pem)
+    if certificate_chain_file is not None and certificate_chain_file != APPEND_CHAIN \
+        and len(chain) > 0:
+        logger("Writing certificate chain to %s." % certificate_chain_file)
+        with open(certificate_chain_file, 'wb') as f:
+            for cert in chain:
+                f.write(cert)
+
+    return {
+        "private_key": private_key_pem,
+        "csr": csr_pem,
+        "cert": cert_pem,
+        "chain": chain,
+    }
 
 
 class NeedToAgreeToTOS(Exception):
@@ -102,6 +155,11 @@ class NeedToInstallFile(Exception):
         self.url = url
         self.contents = contents
         self.content_type = content_type
+
+
+class NeedToTakeAction(Exception):
+    def __init__(self, actions):
+        self.actions = actions
 
 
 # Set up the ACME client object by loading/creating an account key
@@ -195,25 +253,54 @@ def register(storage, client, log, agree_to_tos_url=None):
 
 def submit_domain_validation(client, regr, account, challenges_file, domain, log):
     # Get challenges for the domain.
-    challg1 = get_challenges(client, regr, domain, challenges_file, log)
+    challg1, resp = get_challenges(client, regr, domain, challenges_file, log)
     challg = challg1.body
+
+    # The authorization object as a whole has a status.
 
     if challg.status.name == "valid":
         # This is already valid. Return it immediately.
+        log("The challenges for %s have been accepted." % domain)
         return challg1
+
+    elif challg.status.name == "processing":
+        # Must wait before proceeding.
+         raise WaitABit(client.retry_after(resp, default=60))
+
     elif challg.status.name != "pending":
-        raise ChallengesUnknownStatus()
+        # We can only respond to a challenge when its status is
+        # pending. What do we do in the remaining cases?
+        # Other statuses are "unknown", "invalid". "revoked" is
+        # filtered out by get_challenges --- we just request a
+        # new challenge in that case.
+        raise ChallengesUnknownStatus(challg.status.name)
 
     # Look for a challenge combination that we can fulfill.
+
     for combination in challg.combinations:
         if len(combination) == 1:
             chg = challg.challenges[combination[0]]
             if isinstance(chg.chall, acme.challenges.SimpleHTTP):
-                if chg.status.name != "pending":
-                    # We can't submit twice. If this challenge is still pending
-                    # but the overall challg object is not valid, then I'm not
-                    # sure how to proceed.
-                    raise ChallengesUnknownStatus()
+                # The particular challenge within the big authorization object also
+                # has a status. I'm not sure what the rules are for when the
+                # statuses can be different.
+                if chg.status.name == "processing":
+                    # The challenge has been submitted and we must wait before proceeding,
+                    # which is the next step after the for loop.
+                    break
+
+                if chg.status.name == "valid":
+                    # Looks like we already answered this challenge correctly.
+                    # But the overall authorization object is not yet valid,
+                    # so instruct the user to wait? That's the next step after
+                    # the for loop.
+                    break
+
+                elif chg.status.name != "pending":
+                    # We can only respond to a challenge when its status is
+                    # pending. What do we do in the remaining cases?
+                    # Other statuses are "unknown", "invalid" and "revoked".
+                    raise ChallengesUnknownStatus(chg.status.name)
 
                 # Submit the SimpleHTTP challenge, raising NeedToInstallFile if
                 # the conditions are not yet met.
@@ -225,19 +312,18 @@ def submit_domain_validation(client, regr, account, challenges_file, domain, log
                     chg,
                     log)
 
-                # The ChallengeResource probably comes back still pending because
-                # it doesn't go THAT fast. Give it a moment, then poll.
-                time.sleep(1)
-                challg1, resp = client.poll(challg1)
-                if challg1.body.status.name == "valid":
-                    # It's valid now. That was fast.
-                    return challg1
+                # We found a challenge combination we can submit for,
+                # and we submitted it. The ChallengeResource probably
+                # comes back still pending because it doesn't go THAT
+                # fast. The next step after the for loop is to wait.
+                break
 
-                # It's not valid. Tell the user they must want.
-                retry_after = client.retry_after(resp, default=60)
-                raise WaitABit(retry_after)
+    else:
+        # We were unable to handle any challenge combination.
+        raise NoChallengeMethodsSupported()
 
-    raise NoChallengeMethodsSupported()
+    # On success, or in other cases, wait.
+    raise WaitABit(client.retry_after(resp, default=60))
 
 
 def get_challenges(client, regr, domain, challenges_file, log):
@@ -253,21 +339,28 @@ def get_challenges(client, regr, domain, challenges_file, log):
         existing_challenges[i] = \
             acme.messages.AuthorizationResource.from_json(existing_challenges[i])
 
-    # Drop any challenges that have expired.
-    existing_challenges = list(filter(lambda challg: is_still_valid(challg.body.expires), existing_challenges))
+    # Drop any challenges that have expired or have been revoked.
+    existing_challenges = list(filter(is_still_valid_challenge, existing_challenges))
 
     # If challenges exist for this domain, reuse it.
+    # We've already dropped expired and revoked challenges, so we don't have
+    # to check that here.
     for i, challg in enumerate(existing_challenges):
         if challg.body.identifier.typ.name == "dns" and challg.body.identifier.value == domain:
             log("Reusing existing challenges for %s." % domain)
 
             # Refresh the record because it may have been updated with validated challenges.
             challg, resp = client.poll(challg)
-            existing_challenges[i] = challg
-            break
+
+            # Check that the refreshed record is still valid.
+            if is_still_valid_challenge(challg):
+                # If so, keep it.
+                existing_challenges[i] = challg
+                break
     else:
         # None found.
         challg = None
+        resp = None
 
     if challg is None:
         # Get new challenges for a domain.
@@ -281,15 +374,22 @@ def get_challenges(client, regr, domain, challenges_file, log):
     with open(challenges_file, 'w') as f:
         f.write(json.dumps([c.to_json() for c in existing_challenges], sort_keys=True, indent=4))
 
-    # Return the new challenges for this domain.
-    return challg
+    # Return the new challenges for this domain, and if we updated it,
+    # then the response object so we can know how long to wait before
+    # polling again.
+    return (challg, resp)
 
 
-def is_still_valid(expires_dt):
+def is_still_valid_challenge(challg):
+    # Disregard any challenge that has been revoked.
+    if challg.body.status.name == "revoked":
+        return False
+            
     # Make sure the datetime is at least two days into the future,
     # to give us enough time to actually perform the challenge and
     # not have to worry about timezone conversion.
     # This is a really bad date comparison that loses timezone info.
+    expires_dt = challg.body.expires
     return (expires_dt.replace(tzinfo=None) - datetime.datetime.utcnow()) > datetime.timedelta(seconds=EXPIRY_BUFFER_TIME)
 
 
@@ -300,18 +400,28 @@ def answer_challenge_simplehttp(domain, chall, client, account, challg_body, log
     # See if we've already installed the file at the right location
     # and the response validates. If it validates locally, submit
     # it to the ACME server.
-    try:
-        ok = resp.simple_verify(chall, domain, account.public_key())
-    except:
-        # invalid JSON data yields untrapped errors
-        ok = False
+
+    # ACME simple HTTP validation over TLS does not require the server's existing
+    # SSL certificate to be valid, and in performing the validation check first,
+    # before submitting it to the ACME server, the ACME client library will also
+    # disable Python's SSL certificate check. That normally issues a warning, but
+    # we want to suppress that warning.
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+
+        try:
+            ok = resp.simple_verify(chall, domain, account.public_key())
+        except:
+            # invalid JSON data yields untrapped errors
+            ok = False
 
     if ok:
         log("Submitting challenge response at %s." % resp.uri(domain, chall))
         return client.answer_challenge(challg_body, resp)
 
     else:
-        log("Validation file is not present.")
+        log("Validation file is not present --- a file must be installed on the web server.")
         raise NeedToInstallFile(
             resp.uri(domain, chall),
             resp.gen_validation(chall, account).json_dumps(),
@@ -341,7 +451,6 @@ def generate_csr(domains, key):
     csr_pem = csr.public_bytes(serialization.Encoding.PEM)  # put into PEM format (bytes)
 
     # Convert the CSR in PEM format to an OpenSSL.crypto.X509Req object.
-    import OpenSSL.crypto
     csr = OpenSSL.crypto.load_certificate_request(OpenSSL.crypto.FILETYPE_PEM, csr_pem)
     return (csr_pem, csr)
 
