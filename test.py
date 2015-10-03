@@ -43,7 +43,7 @@ except WaitABit as e:
 except acme.messages.Error as e:
     # A protocol error occurred. If a CSR was supplied, it might
     # be for a different set of domains than was specified, for instance.
-    print("Somethig went wrong:", e)
+    print("Something went wrong:", e)
 except requests.exceptions.RequestException as e:
     # A DNS or network error occurred.
-    print("Somethig went wrong:", e)
+    print("Something went wrong:", e)
