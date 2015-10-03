@@ -1,7 +1,9 @@
 import requests.exceptions
 import acme.messages
 
-from letsencrypt_simpleclient.client import issue_certificate, NeedToAgreeToTOS, NeedToInstallFile, NeedToTakeAction, WaitABit
+from letsencrypt_simpleclient.client import issue_certificate, \
+    SimpleHTTP, \
+    NeedToAgreeToTOS, NeedToInstallFile, NeedToTakeAction, WaitABit
 
 # Set this to the list of domain names for the certificate. The
 # first will be the "common name" and the rest will be Subject
@@ -15,7 +17,8 @@ def do_issue():
     issue_certificate(
         domains,
         "path/to/some/storage",
-        certificate_file="certificate.crt",
+        validation_method=SimpleHTTP(True), # optional, this is the default
+        certificate_file="certificate.crt", # optional, nothing written if not specified
         certificate_chain_file="chain.crt", # optional, default is to append to certificate_file
         agree_to_tos_url=agree_to_tos)
 

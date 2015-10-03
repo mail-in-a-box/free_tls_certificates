@@ -10,14 +10,26 @@ import acme.messages
 import acme.challenges
 import OpenSSL.crypto
 
+
+# General constants.
 ACME_SERVER = "https://acme-staging.api.letsencrypt.org/directory"
 ACCOUNT_KEY_SIZE = 2048
 EXPIRY_BUFFER_TIME = 60 * 60 * 24 * 2  # two days
 
 
+# This is a single-use class/object that is used as a flag.
 class APPEND_CHAIN:
     pass
 APPEND_CHAIN = APPEND_CHAIN()
+
+
+class DomainValidationMethod(object):
+    pass
+
+
+class SimpleHTTP(DomainValidationMethod):
+    def __init__(self, https):
+        self.https = https
 
 
 def simple_logger(s):
@@ -28,6 +40,7 @@ def simple_logger(s):
 def issue_certificate(
         domains, account_cache_directory,
         agree_to_tos_url=None, 
+        validation_method=SimpleHTTP(True),
         certificate_file=None,
         certificate_chain_file=APPEND_CHAIN,
         private_key=None, csr=None,
@@ -49,7 +62,7 @@ def issue_certificate(
     for domain in domains:
         try:
             # Try this domain's validation.
-            challg = submit_domain_validation(client, regr, account, challenges_file, domain, logger)
+            challg = submit_domain_validation(client, regr, account, challenges_file, domain, validation_method, logger)
             challgs.append(challg)
         except NeedToInstallFile as e:
             # Validation failed because the user needs to take action.
@@ -251,7 +264,7 @@ def register(storage, client, log, agree_to_tos_url=None):
     return regr
 
 
-def submit_domain_validation(client, regr, account, challenges_file, domain, log):
+def submit_domain_validation(client, regr, account, challenges_file, domain, validation_method, log):
     # Get challenges for the domain.
     challg1, resp = get_challenges(client, regr, domain, challenges_file, log)
     challg = challg1.body
@@ -280,7 +293,7 @@ def submit_domain_validation(client, regr, account, challenges_file, domain, log
     for combination in challg.combinations:
         if len(combination) == 1:
             chg = challg.challenges[combination[0]]
-            if isinstance(chg.chall, acme.challenges.SimpleHTTP):
+            if isinstance(chg.chall, acme.challenges.SimpleHTTP) and isinstance(validation_method, SimpleHTTP):
                 # The particular challenge within the big authorization object also
                 # has a status. I'm not sure what the rules are for when the
                 # statuses can be different.
@@ -307,6 +320,7 @@ def submit_domain_validation(client, regr, account, challenges_file, domain, log
                 chg = answer_challenge_simplehttp(
                     domain,
                     chg.chall,
+                    validation_method.https,
                     client,
                     account,
                     chg,
@@ -393,9 +407,9 @@ def is_still_valid_challenge(challg):
     return (expires_dt.replace(tzinfo=None) - datetime.datetime.utcnow()) > datetime.timedelta(seconds=EXPIRY_BUFFER_TIME)
 
 
-def answer_challenge_simplehttp(domain, chall, client, account, challg_body, log):
+def answer_challenge_simplehttp(domain, chall, tls, client, account, challg_body, log):
     # Create a challenge response.
-    resp = acme.challenges.SimpleHTTPResponse(tls=True)
+    resp = acme.challenges.SimpleHTTPResponse(tls=tls)
 
     # See if we've already installed the file at the right location
     # and the response validates. If it validates locally, submit
