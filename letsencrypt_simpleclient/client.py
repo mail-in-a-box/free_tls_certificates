@@ -12,7 +12,7 @@ import OpenSSL.crypto
 
 
 # General constants.
-ACME_SERVER = "https://acme-staging.api.letsencrypt.org/directory"
+LETSENCRYPT_STAGING_SERVER = "https://acme-staging.api.letsencrypt.org/directory"
 ACCOUNT_KEY_SIZE = 2048
 EXPIRY_BUFFER_TIME = 60 * 60 * 24 * 2  # two days
 
@@ -28,8 +28,10 @@ class DomainValidationMethod(object):
 
 
 class SimpleHTTP(DomainValidationMethod):
-    def __init__(self, https):
+    def __init__(self, https, port=None, verify_first=True):
         self.https = https
+        self.port = port # allows override for testing client-side validation
+        self.verify_first = verify_first # allows override to skip client-side validation
 
 
 def simple_logger(s):
@@ -44,6 +46,7 @@ def issue_certificate(
         certificate_file=None,
         certificate_chain_file=APPEND_CHAIN,
         private_key=None, csr=None,
+        acme_server=LETSENCRYPT_STAGING_SERVER,
         logger=simple_logger,
         ):
 
@@ -53,7 +56,12 @@ def issue_certificate(
 
     # Create the ACME client, making a new account & registration
     # if not set up yet.
-    (client, regr, account) = create_client(account_key_file, registration_file, logger, agree_to_tos_url=agree_to_tos_url)
+    (client, regr, account) = create_client(
+        account_key_file,
+        registration_file,
+        logger,
+        agree_to_tos_url=agree_to_tos_url,
+        acme_server=acme_server)
 
     # Submit domain validation.
     challgs = []
@@ -164,10 +172,11 @@ class WaitABit(Exception):
 
 
 class NeedToInstallFile(Exception):
-    def __init__(self, url, contents, content_type):
+    def __init__(self, url, contents, content_type, file_name):
         self.url = url
         self.contents = contents
         self.content_type = content_type
+        self.file_name = file_name
 
 
 class NeedToTakeAction(Exception):
@@ -177,12 +186,12 @@ class NeedToTakeAction(Exception):
 
 # Set up the ACME client object by loading/creating an account key
 # and registering or validating an existing registration.
-def create_client(account_key_file, registration_file, log, agree_to_tos_url=None):
+def create_client(account_key_file, registration_file, log, agree_to_tos_url=None, acme_server=None):
     # Get or generate the Let's Encrypt account key.
     key = load_or_generate_private_key(account_key_file, log)
 
     # Create the client.
-    client = acme.client.Client(ACME_SERVER, key)
+    client = acme.client.Client(acme_server, key)
 
     # Register or validate and update our registration.
     regr = register(registration_file, client, log, agree_to_tos_url=agree_to_tos_url)
@@ -269,6 +278,13 @@ def submit_domain_validation(client, regr, account, challenges_file, domain, val
     challg1, resp = get_challenges(client, regr, domain, challenges_file, log)
     challg = challg1.body
 
+    # If this challenge was just issued, we may not have a resp object yet
+    # but may still need to raise a WaitABit exception.
+    if resp:
+        wait_until = client.retry_after(resp, default=60)
+    else:
+        wait_until = datetime.datetime.now() + datetime.timedelta(seconds=15)
+
     # The authorization object as a whole has a status.
 
     if challg.status.name == "valid":
@@ -278,7 +294,7 @@ def submit_domain_validation(client, regr, account, challenges_file, domain, val
 
     elif challg.status.name == "processing":
         # Must wait before proceeding.
-         raise WaitABit(client.retry_after(resp, default=60))
+        raise WaitABit(wait_until)
 
     elif challg.status.name != "pending":
         # We can only respond to a challenge when its status is
@@ -320,7 +336,7 @@ def submit_domain_validation(client, regr, account, challenges_file, domain, val
                 chg = answer_challenge_simplehttp(
                     domain,
                     chg.chall,
-                    validation_method.https,
+                    validation_method,
                     client,
                     account,
                     chg,
@@ -337,7 +353,7 @@ def submit_domain_validation(client, regr, account, challenges_file, domain, val
         raise NoChallengeMethodsSupported()
 
     # On success, or in other cases, wait.
-    raise WaitABit(client.retry_after(resp, default=60))
+    raise WaitABit(wait_until)
 
 
 def get_challenges(client, regr, domain, challenges_file, log):
@@ -407,28 +423,32 @@ def is_still_valid_challenge(challg):
     return (expires_dt.replace(tzinfo=None) - datetime.datetime.utcnow()) > datetime.timedelta(seconds=EXPIRY_BUFFER_TIME)
 
 
-def answer_challenge_simplehttp(domain, chall, tls, client, account, challg_body, log):
+def answer_challenge_simplehttp(domain, chall, validation_method, client, account, challg_body, log):
     # Create a challenge response.
-    resp = acme.challenges.SimpleHTTPResponse(tls=tls)
+    resp = acme.challenges.SimpleHTTPResponse(tls=validation_method.https)
 
     # See if we've already installed the file at the right location
     # and the response validates. If it validates locally, submit
     # it to the ACME server.
 
-    # ACME simple HTTP validation over TLS does not require the server's existing
-    # SSL certificate to be valid, and in performing the validation check first,
-    # before submitting it to the ACME server, the ACME client library will also
-    # disable Python's SSL certificate check. That normally issues a warning, but
-    # we want to suppress that warning.
-    import warnings
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+    if validation_method.verify_first:
+        # ACME simple HTTP validation over TLS does not require the server's existing
+        # SSL certificate to be valid, and in performing the validation check first,
+        # before submitting it to the ACME server, the ACME client library will also
+        # disable Python's SSL certificate check. That normally issues a warning, but
+        # we want to suppress that warning.
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
 
-        try:
-            ok = resp.simple_verify(chall, domain, account.public_key())
-        except:
-            # invalid JSON data yields untrapped errors
-            ok = False
+            try:
+                # the 'port' argument is for unit testing only
+                ok = resp.simple_verify(chall, domain, account.public_key(), port=validation_method.port)
+            except:
+                # invalid JSON data yields untrapped errors
+                ok = False
+    else:
+        ok = True
 
     if ok:
         log("Submitting challenge response at %s." % resp.uri(domain, chall))
@@ -440,6 +460,7 @@ def answer_challenge_simplehttp(domain, chall, tls, client, account, challg_body
             resp.uri(domain, chall),
             resp.gen_validation(chall, account).json_dumps(),
             resp.CONTENT_TYPE,
+            chall.encode("token"), # the filename
         )
 
 

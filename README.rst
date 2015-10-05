@@ -54,3 +54,24 @@ Example::
         # A DNS or network error occurred.
         print("Something went wrong:", e)
 
+Testing
+--------
+
+To test the library, set up a locally running Boulder server, which is the reference implementation of an ACME server.
+
+* Download the Boulder source code from https://github.com/letsencrypt/boulder.
+* Install docker.
+* Run ``./test/run-docker.sh`` (perhaps with sudo depending on your docker setup).
+
+Boulder runs in its test configuration by default which performs Simple HTTP domain validation by querying the host machine on port 5001 no matter what domain a certificate is being requested for, which is handy for creating a test server to respond to those requests. (You still have to test with a valid public domain name, however, so ``something.invalid`` will be rejected by your Boulder server.)
+
+Create a virtual environment for testing if you don't already have one::
+
+    virtualenv -ppython3 env
+    source env/bin/activate
+
+Start our unit test::
+
+    python test.py
+
+This checks that the local Boulder server will issue a certificate for an arbitrary domain.
