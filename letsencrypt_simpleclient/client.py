@@ -33,6 +33,10 @@ class SimpleHTTP(DomainValidationMethod):
         self.port = port # allows override for testing client-side validation
         self.verify_first = verify_first # allows override to skip client-side validation
 
+    def __str__(self):
+        return "Simple HTTP (%s)" % (
+            ("http:" if not self.https else "https:") if not self.port else self.port
+            )
 
 def simple_logger(s):
     import sys
@@ -52,7 +56,7 @@ def issue_certificate(
 
     account_key_file = os.path.join(account_cache_directory, 'account.pem')
     registration_file = os.path.join(account_cache_directory, 'registration.json')
-    challenges_file = os.path.join(account_cache_directory, 'challenges.json')
+    challenges_file = os.path.join(account_cache_directory, 'challenges.json') # also in forget_challenge
 
     # Create the ACME client, making a new account & registration
     # if not set up yet.
@@ -160,6 +164,16 @@ class NeedToAgreeToTOS(Exception):
 
 class NoChallengeMethodsSupported(Exception):
     pass
+
+
+class ChallengeFailed(Exception):
+    def __init__(self, validation_method, domain, message, challenge_uri):
+        self.validation_method = validation_method
+        self.domain = domain
+        self.message = message
+        self.challenge_uri = challenge_uri
+    def __str__(self):
+        return "The %s challenge for %s failed: %s." % (self.validation_method, self.domain, self.method)
 
 
 class ChallengesUnknownStatus(Exception):
@@ -292,16 +306,18 @@ def submit_domain_validation(client, regr, account, challenges_file, domain, val
         log("The challenges for %s have been accepted." % domain)
         return challg1
 
-    elif challg.status.name == "processing":
-        # Must wait before proceeding.
-        raise WaitABit(wait_until)
+    elif challg.status.name == "invalid":
+        # Challenge was rejected. The ACME server requested the
+        # Simple HTTP URL but got a 404, for instance.
+        message = '; '.join(c.error.detail for c in challg.challenges if c.status.name == "invalid")
+        log("The %s challenge for %s failed: %s." % (validation_method, domain, message))
+        raise ChallengeFailed(validation_method, domain, message, challg1.uri)
 
-    elif challg.status.name != "pending":
+    elif challg.status.name not in ("pending", "processing"):
         # We can only respond to a challenge when its status is
-        # pending. What do we do in the remaining cases?
-        # Other statuses are "unknown", "invalid". "revoked" is
-        # filtered out by get_challenges --- we just request a
-        # new challenge in that case.
+        # pending. What do we do in the remaining case of "unknown"
+        # status? ("revoked" is filtered out by get_challenges ---
+        # we just request a new challenge in that case.)
         raise ChallengesUnknownStatus(challg.status.name)
 
     # Look for a challenge combination that we can fulfill.
@@ -318,7 +334,7 @@ def submit_domain_validation(client, regr, account, challenges_file, domain, val
                     # which is the next step after the for loop.
                     break
 
-                if chg.status.name == "valid":
+                elif chg.status.name == "valid":
                     # Looks like we already answered this challenge correctly.
                     # But the overall authorization object is not yet valid,
                     # so instruct the user to wait? That's the next step after
@@ -357,25 +373,13 @@ def submit_domain_validation(client, regr, account, challenges_file, domain, val
 
 
 def get_challenges(client, regr, domain, challenges_file, log):
-    # Load any existing challenges we've requested for domains so we
-    # can track the challenges we've requested across sessions.
-    existing_challenges = []
-    if os.path.exists(challenges_file):
-        with open(challenges_file) as f:
-            existing_challenges = json.load(f)
-
-    # Load.
-    for i in range(len(existing_challenges)):
-        existing_challenges[i] = \
-            acme.messages.AuthorizationResource.from_json(existing_challenges[i])
-
-    # Drop any challenges that have expired or have been revoked.
-    existing_challenges = list(filter(is_still_valid_challenge, existing_challenges))
+    # Load the cache of challenges.
+    challenges = load_challenges_file(challenges_file)
 
     # If challenges exist for this domain, reuse it.
     # We've already dropped expired and revoked challenges, so we don't have
     # to check that here.
-    for i, challg in enumerate(existing_challenges):
+    for i, challg in enumerate(challenges):
         if challg.body.identifier.typ.name == "dns" and challg.body.identifier.value == domain:
             log("Reusing existing challenges for %s." % domain)
 
@@ -385,7 +389,7 @@ def get_challenges(client, regr, domain, challenges_file, log):
             # Check that the refreshed record is still valid.
             if is_still_valid_challenge(challg):
                 # If so, keep it.
-                existing_challenges[i] = challg
+                challenges[i] = challg
                 break
     else:
         # None found.
@@ -398,11 +402,10 @@ def get_challenges(client, regr, domain, challenges_file, log):
         challg = client.request_domain_challenges(domain, regr.new_authzr_uri)
 
         # Add into our existing challenges.
-        existing_challenges.append(challg)
+        challenges.append(challg)
 
-    # Save new set of challenges.
-    with open(challenges_file, 'w') as f:
-        f.write(json.dumps([c.to_json() for c in existing_challenges], sort_keys=True, indent=4))
+    # Write a cache of challenges.
+    save_challenges_file(challenges, challenges_file)
 
     # Return the new challenges for this domain, and if we updated it,
     # then the response object so we can know how long to wait before
@@ -410,17 +413,52 @@ def get_challenges(client, regr, domain, challenges_file, log):
     return (challg, resp)
 
 
+def load_challenges_file(challenges_file):
+    # Load any existing challenges we've requested for domains so we
+    # can track the challenges we've requested across sessions.
+    challenges = []
+    if os.path.exists(challenges_file):
+        with open(challenges_file) as f:
+            challenges = json.load(f)
+
+    # Convert from JSON to ACME objects.
+    for i in range(len(challenges)):
+        challenges[i] = \
+            acme.messages.AuthorizationResource.from_json(challenges[i])
+
+    # Drop any challenges that have expired or have been revoked.
+    challenges = [challg for challg in challenges if is_still_valid_challenge(challg)]
+
+    return challenges
+
+
 def is_still_valid_challenge(challg):
     # Disregard any challenge that has been revoked.
     if challg.body.status.name == "revoked":
         return False
-            
+
     # Make sure the datetime is at least two days into the future,
     # to give us enough time to actually perform the challenge and
     # not have to worry about timezone conversion.
     # This is a really bad date comparison that loses timezone info.
     expires_dt = challg.body.expires
     return (expires_dt.replace(tzinfo=None) - datetime.datetime.utcnow()) > datetime.timedelta(seconds=EXPIRY_BUFFER_TIME)
+
+
+def save_challenges_file(challenges, challenges_file):
+    # Save new set of challenges.
+    with open(challenges_file, 'w') as f:
+        f.write(json.dumps([c.to_json() for c in challenges], sort_keys=True, indent=4))
+
+
+def forget_challenge(challenge_uri, account_cache_directory):
+    # Update the challenges cache file to drop the named challenge
+    # so that on future calls we ignore it, e.g. if it is in invalid
+    # state and we want to be issued a new challenge.
+    challenges_file = os.path.join(account_cache_directory, 'challenges.json') # also in issue_certificate
+    challenges = load_challenges_file(challenges_file)
+    challenges = [challg for challg in challenges if challg.uri != challenge_uri]
+    save_challenges_file(challenges, challenges_file)
 
 
 def answer_challenge_simplehttp(domain, chall, validation_method, client, account, challg_body, log):

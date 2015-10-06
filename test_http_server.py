@@ -8,9 +8,6 @@ root_path = "/.well-known/acme-challenge/"
 
 class Handler(http.server.SimpleHTTPRequestHandler):
 	def translate_path(self, path):
-		import time
-		time.sleep(2)
-
 		if path.startswith(root_path):
 			# Strip the well-known prefix so we serve only
 			# that directory.

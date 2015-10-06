@@ -10,7 +10,8 @@ import acme.messages
 
 from letsencrypt_simpleclient.client import issue_certificate, \
     SimpleHTTP, \
-    NeedToAgreeToTOS, NeedToInstallFile, NeedToTakeAction, WaitABit
+    NeedToAgreeToTOS, NeedToInstallFile, NeedToTakeAction, WaitABit, \
+    ChallengeFailed, forget_challenge
 
 ACME_SERVER = "http://0.0.0.0:4000/directory"
 domains = ["invalid.mailinabox.email"]
@@ -58,6 +59,7 @@ class MyTest(unittest.TestCase):
     def runTest(self):
         self.test_main()
         self.test_invalid_domain()
+        self.test_challenge_fails()
 
     def test_main(self):
         # Call the first time. It raises an exception telling us the
@@ -86,7 +88,6 @@ class MyTest(unittest.TestCase):
             # Create the file so we can pass validation. We write it to the
             # directory that our local HTTP server is serving.
             fn = os.path.join(self.challenges_dir, action.file_name)
-            print("WR", fn)
             with open(fn, 'w') as f:
                 f.write(action.contents)
 
@@ -129,6 +130,53 @@ class MyTest(unittest.TestCase):
         # TOS is already agreed to by main test.
         with self.assertRaises(acme.messages.Error) as cm:
             self.do_issue(domains=["test.invalid"])
+
+    def test_challenge_fails(self):
+        # Submit a challenge immediately, even though we haven't yet
+        # installed a file.
+        validation_method.verify_first = False
+        with self.assertRaises(WaitABit) as cm:
+            self.do_issue(domains=["anotherdomain.com"])
+        
+        # Give the Boulder server a chance to evaluate the challenge
+        # and go from pending status to invalid status.
+        import time
+        time.sleep(5)
+                
+        # Try to issue, but it will fail now.
+        with self.assertRaises(ChallengeFailed):
+            self.do_issue(domains=["anotherdomain.com"])
+
+        # And on any future attempts, because the challenge is cached.
+        with self.assertRaises(ChallengeFailed) as cm:
+            self.do_issue(domains=["anotherdomain.com"])
+
+        # Clear the challenge from the cache so we get issued a new one.
+        forget_challenge(cm.exception.challenge_uri, self.account_dir)
+
+        # Get a new challenge. Write the challenge response file.
+        validation_method.verify_first = True
+        with self.assertRaises(NeedToTakeAction) as cm:
+            self.do_issue(domains=["anotherdomain.com"])
+        for action in cm.exception.actions:
+            fn = os.path.join(self.challenges_dir, action.file_name)
+            with open(fn, 'w') as f:
+                f.write(action.contents)
+
+        # Submit and wait.
+        with self.assertRaises(WaitABit) as cm:
+            self.do_issue(domains=["anotherdomain.com"])
+
+        # Get the certificate.
+        while True:
+            try:
+                # Try to get the certificate again.
+                self.do_issue(domains=["anotherdomain.com"])
+                break
+            except WaitABit:
+                time.sleep(1)
+                continue
+
 
 def load_cert_chain(pemfile):
     # A certificate .pem file may contain a chain of certificates.
