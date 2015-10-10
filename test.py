@@ -11,10 +11,10 @@ import acme.messages
 from letsencrypt_simpleclient.client import issue_certificate, \
     SimpleHTTP, \
     NeedToAgreeToTOS, NeedToInstallFile, NeedToTakeAction, WaitABit, \
-    ChallengeFailed, forget_challenge
+    ChallengeFailed, InvalidDomainName, forget_challenge
 
 ACME_SERVER = "http://0.0.0.0:4000/directory"
-domains = ["invalid.mailinabox.email"]
+domains = ["localhost.test-domain.invalid.xyz"]
 validation_method = SimpleHTTP(False, 5001)
 
 def run():
@@ -34,34 +34,30 @@ def run():
         httpd = subprocess.Popen(["python3", os.path.join(os.path.abspath(os.path.dirname(__file__)), "test_http_server.py")],
             cwd=challenges_dir)
         try:
-            test = MyTest()
+            MyTest.output_dir = output_dir
+            MyTest.challenges_dir = challenges_dir
+            MyTest.account_dir = account_dir
 
-            test.output_dir = output_dir
-            test.challenges_dir = challenges_dir
-            test.account_dir = account_dir
-
-            unittest.TextTestRunner().run(test)
+            unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromTestCase(MyTest))
         finally:
             httpd.terminate()
 
 
 class MyTest(unittest.TestCase):
-    def do_issue(self, domains=domains, agree_to_tos_url=None):
+    def do_issue(self, domains=domains, **kwargs):
         issue_certificate(
             domains,
             self.account_dir,
             validation_method=validation_method,
             certificate_file=os.path.join(self.output_dir, "certificate.crt"),
             certificate_chain_file=os.path.join(self.output_dir, "chain.crt"),
-            agree_to_tos_url=agree_to_tos_url,
-            acme_server=ACME_SERVER)
+            acme_server=ACME_SERVER,
+            **kwargs)
 
-    def runTest(self):
-        self.test_main()
-        self.test_invalid_domain()
-        self.test_challenge_fails()
-
-    def test_main(self):
+    # This method needs to occur first because the other tests depend on the
+    # ACME terms of service being agreed to, so we use two _'s to make it
+    # lexicographically first.
+    def test__main(self):
         # Call the first time. It raises an exception telling us the
         # URL to the terms of service agreement the user needs to agree to.
         with self.assertRaises(NeedToAgreeToTOS) as cm:
@@ -128,7 +124,7 @@ class MyTest(unittest.TestCase):
 
     def test_invalid_domain(self):
         # TOS is already agreed to by main test.
-        with self.assertRaises(acme.messages.Error) as cm:
+        with self.assertRaises(InvalidDomainName) as cm:
             self.do_issue(domains=["test.invalid"])
 
     def test_challenge_fails(self):
@@ -136,7 +132,7 @@ class MyTest(unittest.TestCase):
         # installed a file.
         validation_method.verify_first = False
         with self.assertRaises(WaitABit) as cm:
-            self.do_issue(domains=["anotherdomain.com"])
+            self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
         
         # Give the Boulder server a chance to evaluate the challenge
         # and go from pending status to invalid status.
@@ -145,11 +141,11 @@ class MyTest(unittest.TestCase):
                 
         # Try to issue, but it will fail now.
         with self.assertRaises(ChallengeFailed):
-            self.do_issue(domains=["anotherdomain.com"])
+            self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
 
         # And on any future attempts, because the challenge is cached.
         with self.assertRaises(ChallengeFailed) as cm:
-            self.do_issue(domains=["anotherdomain.com"])
+            self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
 
         # Clear the challenge from the cache so we get issued a new one.
         forget_challenge(cm.exception.challenge_uri, self.account_dir)
@@ -157,25 +153,36 @@ class MyTest(unittest.TestCase):
         # Get a new challenge. Write the challenge response file.
         validation_method.verify_first = True
         with self.assertRaises(NeedToTakeAction) as cm:
-            self.do_issue(domains=["anotherdomain.com"])
+            self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
         for action in cm.exception.actions:
             fn = os.path.join(self.challenges_dir, action.file_name)
             with open(fn, 'w') as f:
                 f.write(action.contents)
 
         # Submit and wait.
+        validation_method.verify_first = False # it won't resolve so we can't verify
         with self.assertRaises(WaitABit) as cm:
-            self.do_issue(domains=["anotherdomain.com"])
+            self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
 
         # Get the certificate.
         while True:
             try:
                 # Try to get the certificate again.
-                self.do_issue(domains=["anotherdomain.com"])
+                self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
                 break
             except WaitABit:
                 time.sleep(1)
                 continue
+
+    def test_invalid_private_key_argument(self):
+        # We're already authorized by the main test to issue the certificate.
+        with self.assertRaises(ValueError):
+            self.do_issue(private_key="my str instance is not a bytes instance")
+
+    def test_invalid_csr_argument(self):
+        # We're already authorized by the main test to issue the certificate.
+        with self.assertRaises(ValueError):
+            self.do_issue(csr="my str instance is not a bytes instance")
 
 
 def load_cert_chain(pemfile):

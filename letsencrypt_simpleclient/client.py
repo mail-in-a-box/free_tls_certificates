@@ -97,17 +97,19 @@ def issue_certificate(
 
     from cryptography.hazmat.backends import default_backend
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
 
     if private_key is None:
         # Generate a new private key if not given to us.
         logger("Generating a new private key.")
-        from cryptography.hazmat.primitives.asymmetric import rsa
         private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
         private_key_pem = private_key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL, encryption_algorithm=serialization.NoEncryption())
     elif isinstance(private_key, bytes):
         # Deserialize.
         private_key_pem = private_key
         private_key = serialization.load_pem_private_key(private_key, password=None, backend=default_backend())
+    elif not isinstance(private_key, rsa.RSAPrivateKey):
+        raise ValueError("private_key must be None, a bytes instance containing a private key in PEM format, or a cryptography.hazmat.primitives.asymmetric.rsa.RSAPrivateKey instance (it is a %s)." % type(private_key))
 
     # Create a CSR, if you don't have one already.
     if csr is None:
@@ -119,6 +121,8 @@ def issue_certificate(
         # will of course also check this for us.
         csr_pem = csr
         csr = OpenSSL.crypto.load_certificate_request(OpenSSL.crypto.FILETYPE_PEM, csr_pem)
+    elif not isinstance(csr, rsa.RSAPrivateKey):
+        raise ValueError("csr must be None, a bytes instance containing a certificate signing request in PEM format, or a cryptography.hazmat.primitives.asymmetric.rsa.RSAPrivateKey instance (it is a %s)." % type(csr))
 
     # Request a certificate using the CSR and some number of domain validation challenges.
     logger("Requesting a certificate.")
@@ -157,9 +161,23 @@ def issue_certificate(
     }
 
 
+class AccountDataIsCorrupt(Exception):
+    def __init__(self, account_file_path):
+        self.account_file_path = account_file_path
+
+
 class NeedToAgreeToTOS(Exception):
     def __init__(self, url):
         self.url = url
+
+
+class InvalidDomainName(Exception):
+    def __init__(self, domain_name, error_message):
+        self.domain_name = domain_name
+        self.error_message = error_message
+    def __str__(self):
+        return "'%s' is not a domain name that the ACME server can issue a certificate for (%s)" % (
+            self.domain_name, self.error_message)
 
 
 class NoChallengeMethodsSupported(Exception):
@@ -173,7 +191,7 @@ class ChallengeFailed(Exception):
         self.message = message
         self.challenge_uri = challenge_uri
     def __str__(self):
-        return "The %s challenge for %s failed: %s." % (self.validation_method, self.domain, self.method)
+        return "The %s challenge for %s failed: %s." % (self.validation_method, self.domain, self.message)
 
 
 class ChallengesUnknownStatus(Exception):
@@ -270,7 +288,14 @@ def register(storage, client, log, agree_to_tos_url=None):
         with open(storage, 'r') as f:
             regr = acme.messages.RegistrationResource.json_loads(f.read())
         existing_regr = regr.json_dumps()
-        regr = client.query_registration(regr)
+        try:
+            regr = client.query_registration(regr)
+        except acme.messages.Error as e:
+            if e.typ == "unauthorized":
+                # There is a problem accessing our own account. This probably
+                # means the stored registration information is not valid.
+                raise AccountDataIsCorrupt(storage)
+            raise
 
     # If this call is to agree to a terms of service agreement, update the
     # registration.
@@ -384,7 +409,14 @@ def get_challenges(client, regr, domain, challenges_file, log):
             log("Reusing existing challenges for %s." % domain)
 
             # Refresh the record because it may have been updated with validated challenges.
-            challg, resp = client.poll(challg)
+            try:
+                challg, resp = client.poll(challg)
+            except acme.messages.Error as e:
+                if e.typ in ("unauthorized", "malformed"):
+                    # There is a problem accessing our own account. This probably
+                    # means the stored registration information is not valid.
+                    raise AccountDataIsCorrupt(challenges_file)
+                raise
 
             # Check that the refreshed record is still valid.
             if is_still_valid_challenge(challg):
@@ -399,7 +431,12 @@ def get_challenges(client, regr, domain, challenges_file, log):
     if challg is None:
         # Get new challenges for a domain.
         log("Requesting new challenges for %s." % domain)
-        challg = client.request_domain_challenges(domain, regr.new_authzr_uri)
+        try:
+            challg = client.request_domain_challenges(domain, regr.new_authzr_uri)
+        except acme.messages.Error as e:
+            if e.typ == "unauthorized":
+                raise InvalidDomainName(domain, e.detail)
+            raise
 
         # Add into our existing challenges.
         challenges.append(challg)

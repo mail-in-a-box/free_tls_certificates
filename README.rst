@@ -70,6 +70,8 @@ Create a virtual environment for testing if you don't already have one::
     virtualenv -ppython3 env
     source env/bin/activate
 
+Add ``127.0.0.1 localhost.test-domain.invalid.xyz`` to your ``/etc/hosts`` file (this is so that client-side verification that the domain validation check is in place can succeed).
+
 Start our unit test::
 
     python test.py
