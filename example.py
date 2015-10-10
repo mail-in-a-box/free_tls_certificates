@@ -38,7 +38,7 @@ except client.NeedToTakeAction as e:
     for action in e.actions:
         if isinstance(action, client.NeedToInstallFile):
             print("Install a file!")
-            print("Location:", action.url)
+            print("Location:", action.url) # action.file_name is just the final filename portion
             print("Content Type:", action.content_type)
             print("Contents:", action.contents)
             print()

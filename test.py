@@ -12,7 +12,7 @@ from letsencrypt_simpleclient import client
 
 ACME_SERVER = "http://0.0.0.0:4000/directory"
 domains = ["localhost.test-domain.invalid.xyz"]
-validation_method = client.SimpleHTTP(False, 5001)
+validation_method = client.SimpleHTTP(5001)
 
 def run():
     # Start a locally running web server that will serve

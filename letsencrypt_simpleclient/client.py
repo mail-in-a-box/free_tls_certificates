@@ -28,15 +28,12 @@ class DomainValidationMethod(object):
 
 
 class SimpleHTTP(DomainValidationMethod):
-    def __init__(self, https, port=None, verify_first=True):
-        self.https = https
+    def __init__(self, port=None, verify_first=True):
         self.port = port # allows override for testing client-side validation
         self.verify_first = verify_first # allows override to skip client-side validation
 
     def __str__(self):
-        return "Simple HTTP (%s)" % (
-            ("http:" if not self.https else "https:") if not self.port else self.port
-            )
+        return "Simple HTTP"
 
 def simple_logger(s):
     import sys
@@ -46,7 +43,7 @@ def simple_logger(s):
 def issue_certificate(
         domains, account_cache_directory,
         agree_to_tos_url=None, 
-        validation_method=SimpleHTTP(True),
+        validation_method=SimpleHTTP(),
         certificate_file=None,
         certificate_chain_file=APPEND_CHAIN,
         private_key=None, csr=None,
@@ -500,7 +497,7 @@ def forget_challenge(challenge_uri, account_cache_directory):
 
 def answer_challenge_simplehttp(domain, chall, validation_method, client, account, challg_body, log):
     # Create a challenge response.
-    resp = acme.challenges.SimpleHTTPResponse(tls=validation_method.https)
+    resp = acme.challenges.SimpleHTTPResponse(tls=False)
 
     # See if we've already installed the file at the right location
     # and the response validates. If it validates locally, submit
