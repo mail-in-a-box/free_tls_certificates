@@ -8,14 +8,11 @@ import tempfile
 import requests.exceptions
 import acme.messages
 
-from letsencrypt_simpleclient.client import issue_certificate, \
-    SimpleHTTP, \
-    NeedToAgreeToTOS, NeedToInstallFile, NeedToTakeAction, WaitABit, \
-    ChallengeFailed, InvalidDomainName, forget_challenge
+from letsencrypt_simpleclient import client
 
 ACME_SERVER = "http://0.0.0.0:4000/directory"
 domains = ["localhost.test-domain.invalid.xyz"]
-validation_method = SimpleHTTP(False, 5001)
+validation_method = client.SimpleHTTP(False, 5001)
 
 def run():
     # Start a locally running web server that will serve
@@ -45,7 +42,7 @@ def run():
 
 class MyTest(unittest.TestCase):
     def do_issue(self, domains=domains, **kwargs):
-        issue_certificate(
+        client.issue_certificate(
             domains,
             self.account_dir,
             validation_method=validation_method,
@@ -60,13 +57,13 @@ class MyTest(unittest.TestCase):
     def test__main(self):
         # Call the first time. It raises an exception telling us the
         # URL to the terms of service agreement the user needs to agree to.
-        with self.assertRaises(NeedToAgreeToTOS) as cm:
+        with self.assertRaises(client.NeedToAgreeToTOS) as cm:
             self.do_issue()
         tos_url = cm.exception.url
 
         # Now agree. But it'll raise an exception telling us we need
         # to make a file available at a certain URL.
-        with self.assertRaises(NeedToTakeAction) as cm:
+        with self.assertRaises(client.NeedToTakeAction) as cm:
             self.do_issue(agree_to_tos_url=tos_url)
         actions = cm.exception.actions
 
@@ -75,7 +72,7 @@ class MyTest(unittest.TestCase):
 
         for action in actions:
             # Check that each action is a SimpleHTTP validation file request.
-            self.assertIsInstance(action, NeedToInstallFile)
+            self.assertIsInstance(action, client.NeedToInstallFile)
             self.assertRegex(action.url, r"http://[^/]+/.well-known/acme-challenge/")
             self.assertEqual(action.content_type, "application/jose+json")
             self.assertRegex(action.contents, r"\{.*\}$")
@@ -90,7 +87,7 @@ class MyTest(unittest.TestCase):
         # Try to get the certificate again, but it'll tell us to wait while
         # the ACME server processes the request.
         validation_method.verify_first = False
-        with self.assertRaises(WaitABit) as cm:
+        with self.assertRaises(client.WaitABit) as cm:
             self.do_issue()
 
         # Now actually wait until the certificate is issued.
@@ -101,7 +98,7 @@ class MyTest(unittest.TestCase):
 
                 # Success.
                 break
-            except WaitABit:
+            except client.WaitABit:
                 import time
                 time.sleep(1)
                 continue
@@ -124,14 +121,14 @@ class MyTest(unittest.TestCase):
 
     def test_invalid_domain(self):
         # TOS is already agreed to by main test.
-        with self.assertRaises(InvalidDomainName) as cm:
+        with self.assertRaises(client.InvalidDomainName) as cm:
             self.do_issue(domains=["test.invalid"])
 
     def test_challenge_fails(self):
         # Submit a challenge immediately, even though we haven't yet
         # installed a file.
         validation_method.verify_first = False
-        with self.assertRaises(WaitABit) as cm:
+        with self.assertRaises(client.WaitABit) as cm:
             self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
         
         # Give the Boulder server a chance to evaluate the challenge
@@ -140,19 +137,19 @@ class MyTest(unittest.TestCase):
         time.sleep(5)
                 
         # Try to issue, but it will fail now.
-        with self.assertRaises(ChallengeFailed):
+        with self.assertRaises(client.ChallengeFailed):
             self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
 
         # And on any future attempts, because the challenge is cached.
-        with self.assertRaises(ChallengeFailed) as cm:
+        with self.assertRaises(client.ChallengeFailed) as cm:
             self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
 
         # Clear the challenge from the cache so we get issued a new one.
-        forget_challenge(cm.exception.challenge_uri, self.account_dir)
+        client.forget_challenge(cm.exception.challenge_uri, self.account_dir)
 
         # Get a new challenge. Write the challenge response file.
         validation_method.verify_first = True
-        with self.assertRaises(NeedToTakeAction) as cm:
+        with self.assertRaises(client.NeedToTakeAction) as cm:
             self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
         for action in cm.exception.actions:
             fn = os.path.join(self.challenges_dir, action.file_name)
@@ -161,7 +158,7 @@ class MyTest(unittest.TestCase):
 
         # Submit and wait.
         validation_method.verify_first = False # it won't resolve so we can't verify
-        with self.assertRaises(WaitABit) as cm:
+        with self.assertRaises(client.WaitABit) as cm:
             self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
 
         # Get the certificate.
@@ -170,7 +167,7 @@ class MyTest(unittest.TestCase):
                 # Try to get the certificate again.
                 self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
                 break
-            except WaitABit:
+            except client.WaitABit:
                 time.sleep(1)
                 continue
 
