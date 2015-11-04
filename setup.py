@@ -16,5 +16,5 @@ setup(
     description='A simple client for Let\'s Encrypt or any ACME server that issues SSL certificates.',
     long_description=open("README.rst").read(),
     keywords = "ssl certificate acme letsencrypt",
-    install_requires=["acme>=0.0.0.dev20151008"],
+    install_requires=open("requirements.txt").read().split("\n"),
 )

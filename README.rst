@@ -63,6 +63,7 @@ Create a virtual environment for testing if you don't already have one::
 
     virtualenv -ppython3 env
     source env/bin/activate
+    pip install -r requirements.txt
 
 Add ``127.0.0.1 localhost.test-domain.invalid.xyz`` to your ``/etc/hosts`` file (this is for our library's client-side verification of the domain validation check).
 
