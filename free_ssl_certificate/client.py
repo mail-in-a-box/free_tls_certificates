@@ -12,6 +12,7 @@ import OpenSSL.crypto
 
 
 # General constants.
+LETSENCRYPT_SERVER = "https://acme-v01.api.letsencrypt.org/directory"
 LETSENCRYPT_STAGING_SERVER = "https://acme-staging.api.letsencrypt.org/directory"
 ACCOUNT_KEY_SIZE = 2048
 EXPIRY_BUFFER_TIME = 60 * 60 * 24 * 2  # two days
@@ -47,7 +48,7 @@ def issue_certificate(
         certificate_file=None,
         certificate_chain_file=APPEND_CHAIN,
         private_key=None, csr=None,
-        acme_server=LETSENCRYPT_STAGING_SERVER,
+        acme_server=LETSENCRYPT_SERVER,
         logger=simple_logger,
         ):
 
