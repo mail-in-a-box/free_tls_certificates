@@ -251,6 +251,11 @@ def load_or_generate_private_key(keyfile, log):
         with open(keyfile, 'rb') as f:
             pem = f.read()
             key = serialization.load_pem_private_key(pem, password=None, backend=default_backend())
+
+    elif not os.path.exists(os.path.dirname(keyfile)):
+        # Directory for storage does not exist.
+        raise ValueError("The path %s does not exist." % os.path.dirname(keyfile))
+
     else:
         # Generate new key and write to file.
         log("Generating a new account key.")
