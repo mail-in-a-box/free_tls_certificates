@@ -11,8 +11,7 @@ import acme.messages
 from free_ssl_certificate import client
 
 ACME_SERVER = "http://0.0.0.0:4000/directory"
-domains = ["localhost.test-domain.invalid.xyz"]
-validation_method = client.HTTPValidation(port=5002)
+domains = ["x1.le.wtf"] # le.wtf is coded to have a high rate limit in the default Boulder test files
 
 def run():
     # Start a locally running web server that will serve
@@ -41,7 +40,7 @@ def run():
 
 
 class MyTest(unittest.TestCase):
-    def do_issue(self, domains=domains, **kwargs):
+    def do_issue(self, domains=domains, validation_method=client.HTTPValidation(port=5002), **kwargs):
         client.issue_certificate(
             domains,
             self.account_dir,
@@ -88,7 +87,6 @@ class MyTest(unittest.TestCase):
 
         # Try to get the certificate again, but it'll tell us to wait while
         # the ACME server processes the request.
-        validation_method.verify_first = False
         with self.assertRaises(client.WaitABit) as cm:
             self.do_issue()
 
@@ -129,9 +127,9 @@ class MyTest(unittest.TestCase):
     def test_challenge_fails(self):
         # Submit a challenge immediately, even though we haven't yet
         # installed a file.
-        validation_method.verify_first = False
+        vm = validation_method=client.HTTPValidation(port=5002, verify_first=False)
         with self.assertRaises(client.WaitABit) as cm:
-            self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
+            self.do_issue(domains=["fail.le.wtf"], validation_method=vm)
         
         # Give the Boulder server a chance to evaluate the challenge
         # and go from pending status to invalid status.
@@ -140,34 +138,32 @@ class MyTest(unittest.TestCase):
                 
         # Try to issue, but it will fail now.
         with self.assertRaises(client.ChallengeFailed):
-            self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
+            self.do_issue(domains=["fail.le.wtf"], validation_method=vm)
 
         # And on any future attempts, because the challenge is cached.
         with self.assertRaises(client.ChallengeFailed) as cm:
-            self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
+            self.do_issue(domains=["fail.le.wtf"], validation_method=vm)
 
         # Clear the challenge from the cache so we get issued a new one.
         client.forget_challenge(cm.exception.challenge_uri, self.account_dir)
 
         # Get a new challenge. Write the challenge response file.
-        validation_method.verify_first = True
         with self.assertRaises(client.NeedToTakeAction) as cm:
-            self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
+            self.do_issue(domains=["fail.le.wtf"])
         for action in cm.exception.actions:
             fn = os.path.join(self.challenges_dir, action.file_name)
             with open(fn, 'w') as f:
                 f.write(action.contents)
 
         # Submit and wait.
-        validation_method.verify_first = False # it won't resolve so we can't verify
         with self.assertRaises(client.WaitABit) as cm:
-            self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
+            self.do_issue(domains=["fail.le.wtf"], validation_method=vm)
 
         # Get the certificate.
         while True:
             try:
                 # Try to get the certificate again.
-                self.do_issue(domains=["invalid.test-domain.invalid.xyz"])
+                self.do_issue(domains=["fail.le.wtf"])
                 break
             except client.WaitABit:
                 time.sleep(1)

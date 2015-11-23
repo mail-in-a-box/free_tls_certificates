@@ -65,10 +65,10 @@ Create a virtual environment for testing if you don't already have one::
     source env/bin/activate
     pip install -r requirements.txt
 
-Add ``127.0.0.1 localhost.test-domain.invalid.xyz`` to your ``/etc/hosts`` file (this is for our library's client-side verification of the domain validation check).
+Add ``127.0.0.1 x1.le.wtf`` to your ``/etc/hosts`` file. Tthis is for our library's client-side verification of the domain validation check, prior to submission of the challenge response to the ACME server. We use x1.le.wtf as the test domain and it should resolve to localhost.
 
 Start our unit test::
 
     python test.py
 
-This checks that the local Boulder server will issue a certificate for ``localhost.test-domain.invalid.xyz``, and it checks other aspects of the library.
+This checks that the local Boulder server will issue a certificate for ``x1.le.wtf``, and it checks other aspects of the library.
