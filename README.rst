@@ -57,7 +57,7 @@ To test the library, set up a locally running Boulder server, which is the refer
 * Change to the directory that you put Boulder in.
 * Run ``./test/run-docker.sh`` (perhaps with sudo depending on your docker setup).
 
-Boulder runs in its test configuration by default which performs Simple HTTP domain validation by querying the docker host machine on port 5001 no matter what domain a certificate is being requested for, which is handy for creating a test server to respond to those requests. (You still have to test with a valid public domain name, however, so ``something.invalid`` will be rejected by your Boulder server.)
+Boulder runs in its test configuration by default which performs "HTTP01" domain validation by querying the docker host machine on port 5002 no matter what domain a certificate is being requested for, which is handy for creating a test server to respond to those requests. (You still have to test with a plausible public domain name, however, so ``something.invalid`` will be rejected by your Boulder server.)
 
 Create a virtual environment for testing if you don't already have one::
 

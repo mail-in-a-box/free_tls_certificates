@@ -27,13 +27,13 @@ class DomainValidationMethod(object):
     pass
 
 
-class SimpleHTTP(DomainValidationMethod):
+class HTTPValidation(DomainValidationMethod):
     def __init__(self, port=None, verify_first=True):
         self.port = port # allows override for testing client-side validation
         self.verify_first = verify_first # allows override to skip client-side validation
 
     def __str__(self):
-        return "Simple HTTP"
+        return "HTTP Validation"
 
 def simple_logger(s):
     import sys
@@ -43,7 +43,7 @@ def simple_logger(s):
 def issue_certificate(
         domains, account_cache_directory,
         agree_to_tos_url=None, 
-        validation_method=SimpleHTTP(),
+        validation_method=HTTPValidation(),
         certificate_file=None,
         certificate_chain_file=APPEND_CHAIN,
         private_key=None, csr=None,
@@ -123,7 +123,12 @@ def issue_certificate(
 
     # Request a certificate using the CSR and some number of domain validation challenges.
     logger("Requesting a certificate.")
-    cert_response = client.request_issuance(csr, challgs)
+    try:
+        cert_response = client.request_issuance(csr, challgs)
+    except acme.messages.Error as e:
+        if e.typ == "rateLimited":
+            raise RateLimited(e.detail)
+        raise # unhandled
 
     # Get the certificate chain.
     chain = client.fetch_chain(cert_response)
@@ -211,6 +216,10 @@ class NeedToInstallFile(Exception):
 class NeedToTakeAction(Exception):
     def __init__(self, actions):
         self.actions = actions
+
+
+class RateLimited(Exception):
+    pass
 
 
 # Set up the ACME client object by loading/creating an account key
@@ -335,7 +344,7 @@ def submit_domain_validation(client, regr, account, challenges_file, domain, val
 
     elif challg.status.name == "invalid":
         # Challenge was rejected. The ACME server requested the
-        # Simple HTTP URL but got a 404, for instance.
+        # HTTP validation resource but got a 404, for instance.
         message = '; '.join(c.error.detail for c in challg.challenges if c.status.name == "invalid")
         log("The %s challenge for %s failed: %s." % (validation_method, domain, message))
         raise ChallengeFailed(validation_method, domain, message, challg1.uri)
@@ -352,7 +361,7 @@ def submit_domain_validation(client, regr, account, challenges_file, domain, val
     for combination in challg.combinations:
         if len(combination) == 1:
             chg = challg.challenges[combination[0]]
-            if isinstance(chg.chall, acme.challenges.SimpleHTTP) and isinstance(validation_method, SimpleHTTP):
+            if isinstance(chg.chall, acme.challenges.HTTP01) and isinstance(validation_method, HTTPValidation):
                 # The particular challenge within the big authorization object also
                 # has a status. I'm not sure what the rules are for when the
                 # statuses can be different.
@@ -374,9 +383,9 @@ def submit_domain_validation(client, regr, account, challenges_file, domain, val
                     # Other statuses are "unknown", "invalid" and "revoked".
                     raise ChallengesUnknownStatus(chg.status.name)
 
-                # Submit the SimpleHTTP challenge, raising NeedToInstallFile if
+                # Submit the HTTP validation challenge, raising NeedToInstallFile if
                 # the conditions are not yet met.
-                chg = answer_challenge_simplehttp(
+                chg = answer_challenge_http(
                     domain,
                     chg.chall,
                     validation_method,
@@ -436,7 +445,7 @@ def get_challenges(client, regr, domain, challenges_file, log):
         try:
             challg = client.request_domain_challenges(domain, regr.new_authzr_uri)
         except acme.messages.Error as e:
-            if e.typ == "unauthorized":
+            if e.typ == "malformed":
                 raise InvalidDomainName(domain, e.detail)
             raise
 
@@ -500,43 +509,36 @@ def forget_challenge(challenge_uri, account_cache_directory):
     save_challenges_file(challenges, challenges_file)
 
 
-def answer_challenge_simplehttp(domain, chall, validation_method, client, account, challg_body, log):
-    # Create a challenge response.
-    resp = acme.challenges.SimpleHTTPResponse(tls=False)
+def answer_challenge_http(domain, chall, validation_method, client, account, challg_body, log):
+    # Create a challenge response object.
+    resp = chall.response(account)
 
     # See if we've already installed the file at the right location
     # and the response validates. If it validates locally, submit
     # it to the ACME server.
 
     if validation_method.verify_first:
-        # ACME simple HTTP validation over TLS does not require the server's existing
-        # SSL certificate to be valid, and in performing the validation check first,
-        # before submitting it to the ACME server, the ACME client library will also
-        # disable Python's SSL certificate check. That normally issues a warning, but
-        # we want to suppress that warning.
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-
-            try:
-                # the 'port' argument is for unit testing only
-                ok = resp.simple_verify(chall, domain, account.public_key(), port=validation_method.port)
-            except:
-                # invalid JSON data yields untrapped errors
-                ok = False
+        try:
+            # the 'port' argument is for unit testing only
+            ok = resp.simple_verify(chall, domain, account.public_key(), port=validation_method.port)
+        except:
+            # assume any untrapped errors means something failed
+            ok = False
     else:
         ok = True
 
+    file_url = chall.uri(domain)
+
     if ok:
-        log("Submitting challenge response at %s." % resp.uri(domain, chall))
+        log("Submitting challenge response file at %s." % file_url)
         return client.answer_challenge(challg_body, resp)
 
     else:
         log("Validation file is not present --- a file must be installed on the web server.")
         raise NeedToInstallFile(
-            resp.uri(domain, chall),
-            resp.gen_validation(chall, account).json_dumps(),
-            resp.CONTENT_TYPE,
+            file_url,
+            chall.validation(account),
+            chall.CONTENT_TYPE,
             chall.encode("token"), # the filename
         )
 

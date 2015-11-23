@@ -9,7 +9,11 @@ from free_ssl_certificate import client
 # first will be the "common name" and the rest will be Subject
 # Alternative Names names. The difference doesn't really matter.
 # You can have just a single domain here.
-domains = ["mailinabox.email", "www.mailinabox.email"]
+#
+# You'll need to replace the domain with a real domain. Let's Encrypt
+# won't even try on an invalid domain name (.tld is not real), and
+# please be respectful and don't put in a domain name you don't own.
+domains = ["invalid-test-domain.tld"]
 
 agree_to_tos = None  # fill this in on second run per output of exception
 
@@ -46,6 +50,11 @@ except client.NeedToTakeAction as e:
 except client.WaitABit as e:
     import datetime
     print ("Try again in %s." % (e.until_when - datetime.datetime.now()))
+
+except client.RateLimited as e:
+    # The ACME server is refusing to issue more certificates for a second-level domain
+    # for your account.
+    print(e)
 
 except acme.messages.Error as e:
     # A protocol error occurred. If a CSR was supplied, it might

@@ -12,7 +12,7 @@ from free_ssl_certificate import client
 
 ACME_SERVER = "http://0.0.0.0:4000/directory"
 domains = ["localhost.test-domain.invalid.xyz"]
-validation_method = client.SimpleHTTP(5001)
+validation_method = client.HTTPValidation(port=5002)
 
 def run():
     # Start a locally running web server that will serve
@@ -51,6 +51,8 @@ class MyTest(unittest.TestCase):
             acme_server=ACME_SERVER,
             **kwargs)
 
+
+
     # This method needs to occur first because the other tests depend on the
     # ACME terms of service being agreed to, so we use two _'s to make it
     # lexicographically first.
@@ -74,8 +76,8 @@ class MyTest(unittest.TestCase):
             # Check that each action is a SimpleHTTP validation file request.
             self.assertIsInstance(action, client.NeedToInstallFile)
             self.assertRegex(action.url, r"http://[^/]+/.well-known/acme-challenge/")
-            self.assertEqual(action.content_type, "application/jose+json")
-            self.assertRegex(action.contents, r"\{.*\}$")
+            self.assertEqual(action.content_type, "text/plain")
+            self.assertRegex(action.contents, r"^[A-Za-z0-9\._-]{60,100}$")
             self.assertRegex(action.file_name, r"^[A-Za-z0-9_-]{40,50}$")
 
             # Create the file so we can pass validation. We write it to the

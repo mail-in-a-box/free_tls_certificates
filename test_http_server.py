@@ -17,8 +17,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 	def guess_type(self, path):
 		# This content type is required by the ACME spec.
-		return "application/jose+json"
+		return "text/plain"
 
-server = http.server.HTTPServer(('', 5001), Handler)
+server = http.server.HTTPServer(('', 5002), Handler)
 server.serve_forever()
 
