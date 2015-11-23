@@ -403,7 +403,7 @@ def submit_domain_validation(client, regr, account, challenges_file, domain, val
 
     else:
         # We were unable to handle any challenge combination.
-        raise NoChallengeMethodsSupported()
+        raise NoChallengeMethodsSupported("No supported challenge methods were offered for %s." % domain)
 
     # On success, or in other cases, wait.
     raise WaitABit(wait_until)
