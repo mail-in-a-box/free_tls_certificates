@@ -1,5 +1,6 @@
 import unittest
 
+import sys
 import re
 import os
 import os.path
@@ -17,7 +18,8 @@ def run():
     # Start a locally running web server that will serve
     # the virtual path '/.well-known/acme-challenge/' from
     # a temporary directory, with the correct content-type
-    # header.
+    # header. The server is in this Python script but it's
+    # launched by a special command-line argument.
     with tempfile.TemporaryDirectory() as tempdir:
         output_dir = os.path.join(tempdir, 'output')
         challenges_dir = os.path.join(tempdir, 'acme-challenges')
@@ -27,7 +29,7 @@ def run():
         os.mkdir(challenges_dir)
         os.mkdir(account_dir)
 
-        httpd = subprocess.Popen(["python3", os.path.join(os.path.abspath(os.path.dirname(__file__)), "test_http_server.py")],
+        httpd = subprocess.Popen(["python3", os.path.abspath(__file__), "--http-server"],
             cwd=challenges_dir)
         try:
             MyTest.output_dir = output_dir
@@ -221,6 +223,35 @@ def get_certificate_domains(cert):
 
     return (cn, sans)
 
+def run_dv_server():
+    # We need a simple HTTP server to respond to
+    # Boulder's SimpleHTTP domain validation calls
+    # with the correct content-type.
+
+    import os.path
+    import http.server
+
+    root_path = "/.well-known/acme-challenge/"
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def translate_path(self, path):
+            if path.startswith(root_path):
+                # Strip the well-known prefix so we serve only
+                # that directory.
+                path = path[len(root_path):]
+            fn = super().translate_path(path)
+            return fn
+
+        def guess_type(self, path):
+            # This content type is required by the ACME spec.
+            return "text/plain"
+
+    server = http.server.HTTPServer(('', 5002), Handler)
+    server.serve_forever()
+
 
 if __name__ == "__main__":
-    run()
+    if sys.argv[-1] == "--http-server":
+        run_dv_server()
+    else:
+        run()
