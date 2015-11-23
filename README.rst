@@ -1,11 +1,11 @@
-Let's Encrypt Simple Client
-===========================
+A Simple Let's Encrypt (ACME) Client
+====================================
 
 **This is a work in progress!**
 
-This is a simple Python client library for `Let's Encrypt <https://letsencrypt.org/>`_, or any ACME server that issues SSL certificates, based on the `acme <https://github.com/letsencrypt/letsencrypt/tree/master/acme>`_ client library.
+``free_ssl_certificate`` is a Python 3 client library for `Let's Encrypt <https://letsencrypt.org/>`_ or any ACME server that issues SSL certificates. The purpose of this library is to make it easier to embed Let's Encrypt within server provisioning applications without resorting to shelling out the ``letsencrypt`` command line client.
 
-The purpose of this library is to make it easier to embed Let's Encrypt within server provisioning applications without resorting to shelling out the ``letsencrypt`` command line client.
+``free_ssl_certificate`` is based on the low-level `acme <https://github.com/letsencrypt/letsencrypt/tree/master/acme>`_ client library by the Let's Encrypt team.
 
 Prerequisites:
 
@@ -16,7 +16,7 @@ Example::
     import requests.exceptions
     import acme.messages
 
-    from letsencrypt_simpleclient import client
+    from free_ssl_certificate import client
 
     domains = ["mailinabox.email", "www.mailinabox.email"]
     agree_to_tos = None  # fill this in on second run per output of exception

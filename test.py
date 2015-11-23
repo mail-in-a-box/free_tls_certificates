@@ -8,7 +8,7 @@ import tempfile
 import requests.exceptions
 import acme.messages
 
-from letsencrypt_simpleclient import client
+from free_ssl_certificate import client
 
 ACME_SERVER = "http://0.0.0.0:4000/directory"
 domains = ["localhost.test-domain.invalid.xyz"]
