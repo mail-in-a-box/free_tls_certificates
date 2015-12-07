@@ -1,3 +1,3 @@
 include LICENSE
 include README.rst
-include free_ssl_certificate/client.py
+include free_tls_certificates/client.py

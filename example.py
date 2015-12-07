@@ -3,7 +3,7 @@
 import requests.exceptions
 import acme.messages
 
-from free_ssl_certificate import client
+from free_tls_certificates import client
 
 # Set this to the list of domain names for the certificate. The
 # first will be the "common name" and the rest will be Subject

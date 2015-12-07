@@ -9,7 +9,7 @@ import tempfile
 import requests.exceptions
 import acme.messages
 
-from free_ssl_certificate import client
+from free_tls_certificates import client
 
 ACME_SERVER = "http://0.0.0.0:4000/directory"
 domains = ["x1.le.wtf"] # le.wtf is coded to have a high rate limit in the default Boulder test files
