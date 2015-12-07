@@ -127,7 +127,7 @@ def issue_certificate(
     try:
         cert_response = client.request_issuance(csr, challgs)
     except acme.messages.Error as e:
-        if e.typ == "rateLimited":
+        if e.typ == "urn:acme:error:rateLimited":
             raise RateLimited(e.detail)
         raise # unhandled
 
@@ -302,7 +302,7 @@ def register(storage, client, log, agree_to_tos_url=None):
         try:
             regr = client.query_registration(regr)
         except acme.messages.Error as e:
-            if e.typ == "unauthorized":
+            if e.typ == "urn:acme:error:unauthorized":
                 # There is a problem accessing our own account. This probably
                 # means the stored registration information is not valid.
                 raise AccountDataIsCorrupt(storage)
@@ -423,7 +423,7 @@ def get_challenges(client, regr, domain, challenges_file, log):
             try:
                 challg, resp = client.poll(challg)
             except acme.messages.Error as e:
-                if e.typ in ("unauthorized", "malformed"):
+                if e.typ in ("urn:acme:error:unauthorized", "urn:acme:error:malformed"):
                     # There is a problem accessing our own account. This probably
                     # means the stored registration information is not valid.
                     raise AccountDataIsCorrupt(challenges_file)
@@ -445,7 +445,7 @@ def get_challenges(client, regr, domain, challenges_file, log):
         try:
             challg = client.request_domain_challenges(domain, regr.new_authzr_uri)
         except acme.messages.Error as e:
-            if e.typ == "malformed":
+            if e.typ == "urn:acme:error:malformed":
                 raise InvalidDomainName(domain, e.detail)
             raise
 
