@@ -37,7 +37,6 @@ Example::
             if isinstance(action, client.NeedToInstallFile):
                 print("Install a file!")
                 print("Location:", action.url)
-                print("Content Type:", action.content_type)
                 print("Contents:", action.contents)
                 print()
 

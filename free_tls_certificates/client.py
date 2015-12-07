@@ -207,10 +207,9 @@ class WaitABit(Exception):
 
 
 class NeedToInstallFile(Exception):
-    def __init__(self, url, contents, content_type, file_name):
+    def __init__(self, url, contents, file_name):
         self.url = url
         self.contents = contents
-        self.content_type = content_type
         self.file_name = file_name
 
 
@@ -539,7 +538,6 @@ def answer_challenge_http(domain, chall, validation_method, client, account, cha
         raise NeedToInstallFile(
             file_url,
             chall.validation(account),
-            chall.CONTENT_TYPE,
             chall.encode("token"), # the filename
         )
 

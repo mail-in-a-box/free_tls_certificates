@@ -77,7 +77,6 @@ class MyTest(unittest.TestCase):
             # Check that each action is a SimpleHTTP validation file request.
             self.assertIsInstance(action, client.NeedToInstallFile)
             self.assertRegex(action.url, r"http://[^/]+/.well-known/acme-challenge/")
-            self.assertEqual(action.content_type, "text/plain")
             self.assertRegex(action.contents, r"^[A-Za-z0-9\._-]{60,100}$")
             self.assertRegex(action.file_name, r"^[A-Za-z0-9_-]{40,50}$")
 
