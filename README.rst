@@ -3,13 +3,13 @@ A Simple Let's Encrypt (ACME) Client
 
 **This is a work in progress!**
 
-``free_tls_certificates`` is a Python 3 client library for `Let's Encrypt <https://letsencrypt.org/>`_ or any ACME server that issues TLS certificates (aka SSL certificates). The purpose of this library is to make it easier to embed Let's Encrypt within server provisioning applications without resorting to shelling out the ``letsencrypt`` command line client.
+``free_tls_certificates`` is a Python 2/3 client library for `Let's Encrypt <https://letsencrypt.org/>`_ or any ACME server that issues `TLS <https://en.wikipedia.org/wiki/Transport_Layer_Security>`_ certificates (aka SSL certificates). The purpose of this library is to make it easier to embed Let's Encrypt within server provisioning applications without resorting to shelling out the ``letsencrypt`` command line client.
 
 This module is based on the low-level `acme <https://github.com/letsencrypt/letsencrypt/tree/master/acme>`_ client library by the Let's Encrypt team.
 
 Prerequisites:
 
-* The Let's Encrypt `ACME client library <https://github.com/letsencrypt/letsencrypt/tree/master/acme>`_ and all of its dependencies.
+* The Let's Encrypt `ACME client library <https://github.com/letsencrypt/letsencrypt/tree/master/acme>`_ and all of `its dependencies <https://github.com/letsencrypt/letsencrypt/blob/master/acme/setup.py#L9>`_.
 
 Example::
 
@@ -30,15 +30,14 @@ Example::
 
     except client.NeedToAgreeToTOS as e:
         print("You need to agree to the TOS. Set this on next run:")
-        print("agree_to_tos =", repr(e.url))
+        print("agree_to_tos = " + repr(e.url))
 
     except client.NeedToTakeAction as e:
         for action in e.actions:
             if isinstance(action, client.NeedToInstallFile):
                 print("Install a file!")
-                print("Location:", action.url)
-                print("Contents:", action.contents)
-                print()
+                print("Location: " + action.url)
+                print("Contents: " + action.contents)
 
     except client.WaitABit as e:
         import datetime
@@ -64,7 +63,7 @@ Create a virtual environment for testing if you don't already have one::
     source env/bin/activate
     pip install -r requirements.txt
 
-Add ``127.0.0.1 x1.le.wtf`` to your ``/etc/hosts`` file. Tthis is for our library's client-side verification of the domain validation check, prior to submission of the challenge response to the ACME server. We use x1.le.wtf as the test domain and it should resolve to localhost.
+Add ``127.0.0.1 x1.le.wtf`` to your ``/etc/hosts`` file. This is for our library's client-side verification of the domain validation check, prior to submission of the challenge response to the ACME server. We use x1.le.wtf as the test domain and it should resolve to localhost.
 
 Start our unit test::
 

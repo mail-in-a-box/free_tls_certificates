@@ -36,11 +36,6 @@ class HTTPValidation(DomainValidationMethod):
     def __str__(self):
         return "HTTP Validation"
 
-def simple_logger(s):
-    import sys
-    print(s, file=sys.stderr)
-
-
 def issue_certificate(
         domains, account_cache_directory,
         agree_to_tos_url=None, 
@@ -49,7 +44,7 @@ def issue_certificate(
         certificate_chain_file=APPEND_CHAIN,
         private_key=None, csr=None,
         acme_server=LETSENCRYPT_SERVER,
-        logger=simple_logger,
+        logger=lambda s : None,
         ):
 
     account_key_file = os.path.join(account_cache_directory, 'account.pem')
@@ -548,6 +543,12 @@ def generate_csr_pyca(domains, key):
     from cryptography.x509.oid import NameOID
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.backends import default_backend
+
+    import sys
+    if sys.version_info < (3,):
+        # In Py2, pyca requires the CN to be a unicode instance.
+        domains = [domain.decode("ascii") for domain in domains]
+
     csr = x509.CertificateSigningRequestBuilder().subject_name(x509.Name([
         x509.NameAttribute(NameOID.COMMON_NAME, domains[0]),
     ])).add_extension(

@@ -17,21 +17,25 @@ domains = ["invalid-test-domain.tld"]
 
 agree_to_tos = None  # fill this in on second run per output of exception
 
+def logger(msg):
+    print(msg)
+
 try:
     client.issue_certificate(
         domains,
         "path/to/some/storage",
         certificate_file="certificate.crt",
-        agree_to_tos_url=agree_to_tos)
+        agree_to_tos_url=agree_to_tos,
+        logger=logger)
 
 except client.AccountDataIsCorrupt as e:
 	# This is an extremely rare condition.
-	print("The account data stored in", e.account_file_path, "is corrupt.")
+	print("The account data stored in " + e.account_file_path + " is corrupt.")
 	print("You should probably delete this file and start over.")
 
 except client.NeedToAgreeToTOS as e:
     print("You need to agree to the TOS. Set this on next run:")
-    print("agree_to_tos =", repr(e.url))
+    print("agree_to_tos = " + repr(e.url))
 
 except client.InvalidDomainName as e:
 	# One of the domain names provided is not a domain name the ACME
@@ -42,13 +46,13 @@ except client.NeedToTakeAction as e:
     for action in e.actions:
         if isinstance(action, client.NeedToInstallFile):
             print("Install a file!")
-            print("Location:", action.url) # action.file_name is just the final filename portion
-            print("Contents:", action.contents)
-            print()
+            print("Location: " + action.url)
+            print("Contents: " + action.contents)
+            # action.file_name also stores just the filename portion of the URL
 
 except client.WaitABit as e:
     import datetime
-    print ("Try again in %s." % (e.until_when - datetime.datetime.now()))
+    print("Try again in %s." % (e.until_when - datetime.datetime.now()))
 
 except client.RateLimited as e:
     # The ACME server is refusing to issue more certificates for a second-level domain
@@ -58,8 +62,8 @@ except client.RateLimited as e:
 except acme.messages.Error as e:
     # A protocol error occurred. If a CSR was supplied, it might
     # be for a different set of domains than was specified, for instance.
-    print("Something went wrong:", e)
+    print("Something went wrong: " + str(e))
 
 except requests.exceptions.RequestException as e:
     # A DNS or network error occurred.
-    print("Something went wrong:", e)
+    print("Something went wrong:" + str(e))

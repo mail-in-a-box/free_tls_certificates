@@ -4,8 +4,9 @@ import sys
 import re
 import os
 import os.path
-import subprocess
+import multiprocessing
 import tempfile
+import shutil
 import requests.exceptions
 import acme.messages
 
@@ -14,32 +15,47 @@ from free_tls_certificates import client
 ACME_SERVER = "http://0.0.0.0:4000/directory"
 domains = ["x1.le.wtf"] # le.wtf is coded to have a high rate limit in the default Boulder test files
 
+if sys.version_info < (3,):
+    unicode_string = unicode("my unicode instance is not a bytes instance")
+else:
+    unicode_string = "my str instance is not a bytes instance"
+
 def run():
     # Start a locally running web server that will serve
     # the virtual path '/.well-known/acme-challenge/' from
     # a temporary directory, with the correct content-type
-    # header. The server is in this Python script but it's
-    # launched by a special command-line argument.
-    with tempfile.TemporaryDirectory() as tempdir:
+    # header.
+    tempdir = tempfile.mkdtemp()
+    try:
+        # Where should we store things?
+
         output_dir = os.path.join(tempdir, 'output')
         challenges_dir = os.path.join(tempdir, 'acme-challenges')
         account_dir = os.path.join(tempdir, 'acme-account')
-        
+
         os.mkdir(output_dir)
         os.mkdir(challenges_dir)
         os.mkdir(account_dir)
 
-        httpd = subprocess.Popen(["python3", os.path.abspath(__file__), "--http-server"],
-            cwd=challenges_dir)
+        # Start the domain validation server.
+
+        httpd = create_dv_server(challenges_dir)
+        httpd_proc = multiprocessing.Process(target=lambda : httpd.serve_forever())
+        httpd_proc.start()
         try:
+
+            # Start the tests.
+
             MyTest.output_dir = output_dir
             MyTest.challenges_dir = challenges_dir
             MyTest.account_dir = account_dir
 
             unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromTestCase(MyTest))
-        finally:
-            httpd.terminate()
 
+        finally:
+            httpd_proc.terminate()
+    finally:
+        shutil.rmtree(tempdir)
 
 class MyTest(unittest.TestCase):
     def do_issue(self, domains=domains, validation_method=client.HTTPValidation(port=5002), **kwargs):
@@ -76,9 +92,9 @@ class MyTest(unittest.TestCase):
         for action in actions:
             # Check that each action is a SimpleHTTP validation file request.
             self.assertIsInstance(action, client.NeedToInstallFile)
-            self.assertRegex(action.url, r"http://[^/]+/.well-known/acme-challenge/")
-            self.assertRegex(action.contents, r"^[A-Za-z0-9\._-]{60,100}$")
-            self.assertRegex(action.file_name, r"^[A-Za-z0-9_-]{40,50}$")
+            self.assertTrue(re.match(r"http://[^/]+/.well-known/acme-challenge/", action.url))
+            self.assertTrue(re.match(r"^[A-Za-z0-9\._-]{60,100}$", action.contents))
+            self.assertTrue(re.match(r"^[A-Za-z0-9_-]{40,50}$", action.file_name))
 
             # Create the file so we can pass validation. We write it to the
             # directory that our local HTTP server is serving.
@@ -173,18 +189,18 @@ class MyTest(unittest.TestCase):
     def test_invalid_private_key_argument(self):
         # We're already authorized by the main test to issue the certificate.
         with self.assertRaises(ValueError):
-            self.do_issue(private_key="my str instance is not a bytes instance")
+            self.do_issue(private_key=unicode_string)
 
     def test_invalid_csr_argument(self):
         # We're already authorized by the main test to issue the certificate.
         with self.assertRaises(ValueError):
-            self.do_issue(csr="my str instance is not a bytes instance")
+            self.do_issue(csr=unicode_string)
 
 
 def load_cert_chain(pemfile):
     # A certificate .pem file may contain a chain of certificates.
     # Load the file and split them apart.
-    re_pem = rb"(-+BEGIN (?:.+)-+[\r\n]+(?:[A-Za-z0-9+/=]{1,64}[\r\n]+)+-+END (?:.+)-+[\r\n]+)"
+    re_pem = r"(-+BEGIN (?:.+)-+[\r\n]+(?:[A-Za-z0-9+/=]{1,64}[\r\n]+)+-+END (?:.+)-+[\r\n]+)".encode("ascii") # for Py3, make bytes
     with open(pemfile, "rb") as f:
         pem = f.read() + b"\n" # ensure trailing newline
         pemblocks = re.findall(re_pem, pem)
@@ -222,35 +238,43 @@ def get_certificate_domains(cert):
 
     return (cn, sans)
 
-def run_dv_server():
+def create_dv_server(challenges_dir):
     # We need a simple HTTP server to respond to
-    # Boulder's SimpleHTTP domain validation calls
-    # with the correct content-type.
+    # Boulder's domain validation requests.
 
     import os.path
-    import http.server
 
     root_path = "/.well-known/acme-challenge/"
+    def translate_path(path):
+        if path.startswith(root_path):
+            # Strip the well-known prefix so we serve only
+            # that directory.
+            path = path[len(root_path):]
+        fn = os.path.join(challenges_dir, path)
+        return fn
 
-    class Handler(http.server.SimpleHTTPRequestHandler):
-        def translate_path(self, path):
-            if path.startswith(root_path):
-                # Strip the well-known prefix so we serve only
-                # that directory.
-                path = path[len(root_path):]
-            fn = super().translate_path(path)
-            return fn
+    if sys.version_info < (3,):
+        from BaseHTTPServer import BaseHTTPRequestHandler
+        from SocketServer import TCPServer as HTTPServer
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                fn = translate_path(self.path)
+                if os.path.exists(fn):
+                    self.send_response(200)
+                    self.end_headers()
+                    with open(fn) as f:
+                        self.wfile.write(f.read())
+                else:
+                    self.send_error(404)
+    else:
+        from http.server import SimpleHTTPRequestHandler
+        from http.server import HTTPServer
+        class Handler(SimpleHTTPRequestHandler):
+            def translate_path(self, path):
+                return translate_path(path)
 
-        def guess_type(self, path):
-            # This content type is required by the ACME spec.
-            return "text/plain"
-
-    server = http.server.HTTPServer(('', 5002), Handler)
-    server.serve_forever()
+    return HTTPServer(('', 5002), Handler)
 
 
 if __name__ == "__main__":
-    if sys.argv[-1] == "--http-server":
-        run_dv_server()
-    else:
-        run()
+    run()
