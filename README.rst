@@ -10,6 +10,7 @@ This module is based on the low-level `acme <https://github.com/letsencrypt/lets
 Prerequisites:
 
 * The Let's Encrypt `ACME client library <https://github.com/letsencrypt/letsencrypt/tree/master/acme>`_ and all of `its dependencies <https://github.com/letsencrypt/letsencrypt/blob/master/acme/setup.py#L9>`_.
+* The ``idna`` module (https://github.com/kjd/idna).
 
 Example::
 
@@ -44,6 +45,13 @@ Example::
         print ("Try again in %s." % (e.until_when - datetime.datetime.now()))
 
 There are some other error conditions that you should handle too --- see the file `example.py <example.py>`_ for a complete example.
+
+Usage Notes
+-----------
+
+You may use any Python string type (``str``, ``bytes``, ``unicode``) to pass domain names. If a domain is internationalized, use Python 2 ``unicode`` and Python 3 ``str`` instances to pass the Unicode form of the domain name. If the string is already IDNA-encoded (i.e. punycode), you may use any string type.
+
+Note that Let's Encrypt doesn't yet (at the time of writing) support issuing certificates for internationalized domains.
 
 Testing
 --------

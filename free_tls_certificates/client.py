@@ -1,14 +1,19 @@
 # Get SSL certificates from Let's Encrypt (letsencrypt.org).
 # ----------------------------------------------------------
 
+import sys
 import os.path
 import json
 import datetime
 import time
+
 import acme.client
 import acme.messages
 import acme.challenges
+
 import OpenSSL.crypto
+
+import idna
 
 
 # General constants.
@@ -47,6 +52,11 @@ def issue_certificate(
         logger=lambda s : None,
         ):
 
+    # Make sure all domains are IDNA-encoded Py2 unicode/Py 3 str instances.
+    # (Note that the IDNA library does not handle wildcards, but neither does ACME yet.)
+    domains = [to_idna(domain) for domain in domains]
+    
+    # Where will we store our account cache?
     account_key_file = os.path.join(account_cache_directory, 'account.pem')
     registration_file = os.path.join(account_cache_directory, 'registration.json')
     challenges_file = os.path.join(account_cache_directory, 'challenges.json') # also in forget_challenge
@@ -158,6 +168,15 @@ def issue_certificate(
         "chain": chain,
     }
 
+def to_idna(domain):
+    # If the domain is passed as a bytes object (alias for str in Python 2),
+    # then assume it is already IDNA encoded and decode as if ASCII and work
+    # with unicode (Py 2 unicode/Py 3 str) instances.
+    if isinstance(domain, bytes):
+        return domain.decode("ascii")
+
+    # IDNA-encode, but get back a unicode instance.
+    return idna.encode(domain).decode("ascii")
 
 class AccountDataIsCorrupt(Exception):
     def __init__(self, account_file_path):

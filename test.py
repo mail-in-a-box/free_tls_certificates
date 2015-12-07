@@ -1,9 +1,11 @@
+# -*- coding: utf8 -*-
 import unittest
 
 import sys
 import re
 import os
 import os.path
+import time
 import multiprocessing
 import tempfile
 import shutil
@@ -90,7 +92,7 @@ class MyTest(unittest.TestCase):
         self.assertEqual(len(actions), len(domains))
 
         for action in actions:
-            # Check that each action is a SimpleHTTP validation file request.
+            # Check that each action is a HTTP validation file request.
             self.assertIsInstance(action, client.NeedToInstallFile)
             self.assertTrue(re.match(r"http://[^/]+/.well-known/acme-challenge/", action.url))
             self.assertTrue(re.match(r"^[A-Za-z0-9\._-]{60,100}$", action.contents))
@@ -116,7 +118,6 @@ class MyTest(unittest.TestCase):
                 # Success.
                 break
             except client.WaitABit:
-                import time
                 time.sleep(1)
                 continue
 
@@ -136,6 +137,19 @@ class MyTest(unittest.TestCase):
         # Check that the certificate is signed by the first element in the chain.
         self.assertEqual(cert[0].issuer, chain[0].subject)
 
+    def test_i8n_domain(self):
+        domains = [u"tëst.le.wtf", u"tëst2.le.wtf"]
+
+        # The main test already agreed to the TOS...
+
+        # Get the challenge details.
+        with self.assertRaises(client.InvalidDomainName) as cm:
+            self.do_issue(domains=domains)
+
+        # LE doesn't yet support internationalized domains, but we should get
+        # back this error telling us.
+        self.assertIn("Internationalized domain names", str(cm.exception))
+
     def test_invalid_domain(self):
         # TOS is already agreed to by main test.
         with self.assertRaises(client.InvalidDomainName) as cm:
@@ -150,7 +164,6 @@ class MyTest(unittest.TestCase):
         
         # Give the Boulder server a chance to evaluate the challenge
         # and go from pending status to invalid status.
-        import time
         time.sleep(5)
                 
         # Try to issue, but it will fail now.
