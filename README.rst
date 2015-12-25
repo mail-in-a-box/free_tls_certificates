@@ -11,6 +11,21 @@ Prerequisites:
 
 * The Let's Encrypt `ACME client library <https://github.com/letsencrypt/letsencrypt/tree/master/acme>`_ and all of `its dependencies <https://github.com/letsencrypt/letsencrypt/blob/master/acme/setup.py#L9>`_.
 * The ``idna`` module (https://github.com/kjd/idna).
+* The ``cryptography`` module (https://github.com/pyca/cryptography) and its dependencies (on Ubuntu: ``sudo apt-get install build-essential libssl-dev libffi-dev python3-dev``).
+
+Usage:
+
+The file `driver.py <free_tls_certificates/driver.py>`_ contains a complete, working example for how to use this client library. It is also a convenient command-line tool for provisioning a certificate, which after pip-installing the package becomes available as ``free_tls_certificate``.
+
+From the command line::
+
+    sudo apt-get install build-essential libssl-dev libffi-dev python3-dev python3-pip
+    sudo pip3 install free_tls_certificates
+    free_tls_certificate domain-name-1.com [domain-name-2.com ...] private.key certificate.crt /path/to/website /path/to/acme/storage
+
+See `driver.py <free_tls_certificates/driver.py>`_ for complete documentation.
+
+Here's basically how it works:
 
 Example::
 
@@ -44,7 +59,7 @@ Example::
         import datetime
         print ("Try again in %s." % (e.until_when - datetime.datetime.now()))
 
-There are some other error conditions that you should handle too --- see the file `example.py <example.py>`_ for a complete example.
+But see the full driver file for all of the error conditions you need to handle.
 
 Usage Notes
 -----------

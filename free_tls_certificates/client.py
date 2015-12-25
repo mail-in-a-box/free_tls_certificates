@@ -47,7 +47,7 @@ def issue_certificate(
         validation_method=HTTPValidation(),
         certificate_file=None,
         certificate_chain_file=APPEND_CHAIN,
-        private_key=None, csr=None,
+        private_key=None, private_key_file=None, csr=None,
         acme_server=LETSENCRYPT_SERVER,
         logger=lambda s : None,
         ):
@@ -102,6 +102,10 @@ def issue_certificate(
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
 
+    if private_key_file and os.path.exists(private_key_file):
+        # Read private key from file.
+        with open(private_key_file, "rb") as f:
+            private_key = f.read()
     if private_key is None:
         # Generate a new private key if not given to us.
         logger("Generating a new private key.")
@@ -114,7 +118,7 @@ def issue_certificate(
     elif not isinstance(private_key, rsa.RSAPrivateKey):
         raise ValueError("private_key must be None, a bytes instance containing a private key in PEM format, or a cryptography.hazmat.primitives.asymmetric.rsa.RSAPrivateKey instance (it is a %s)." % type(private_key))
 
-    # Create a CSR, if you don't have one already.
+    # Create a CSR, if we don't have one already.
     if csr is None:
         logger("Generating a new certificate signing request.")
         (csr_pem, csr) = generate_csr(domains, private_key)
@@ -160,6 +164,11 @@ def issue_certificate(
         with open(certificate_chain_file, 'wb') as f:
             for cert in chain:
                 f.write(cert)
+
+    if private_key_file and not os.path.exists(private_key_file):
+        logger("Writing private key to %s." % private_key_file)
+        with open(private_key_file, "wb") as f:
+            f.write(private_key_pem)
 
     return {
         "private_key": private_key_pem,

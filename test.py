@@ -13,6 +13,7 @@ import requests.exceptions
 import acme.messages
 
 from free_tls_certificates import client
+from free_tls_certificates.utils import get_certificate_domains
 
 ACME_SERVER = "http://0.0.0.0:4000/directory"
 domains = ["x1.le.wtf"] # le.wtf is coded to have a high rate limit in the default Boulder test files
@@ -124,15 +125,15 @@ class MyTest(unittest.TestCase):
         # Check that the certificate is valid.
         cert = load_cert_chain(os.path.join(self.output_dir, 'certificate.crt'))
         self.assertEqual(len(cert), 1) # one element in certificate file
-        cn, sans = get_certificate_domains(cert[0])
-        self.assertEqual(cn, domains[0])
-        self.assertEqual(sans - { domains[0] }, set(domains[1:]))
+        cert_domains = get_certificate_domains(cert[0])
+        self.assertEqual(cert_domains[0], domains[0])
+        self.assertEqual(set(cert_domains), set(domains))
 
         # Check that the chain is valid.
         chain = load_cert_chain(os.path.join(self.output_dir, 'chain.crt'))
         self.assertEqual(len(chain), 1) # one element in chain
-        cn, sans = get_certificate_domains(chain[0])
-        self.assertEqual(cn, 'happy hacker fake CA')
+        chain_names = get_certificate_domains(chain[0])
+        self.assertEqual(chain_names[0], 'happy hacker fake CA')
 
         # Check that the certificate is signed by the first element in the chain.
         self.assertEqual(cert[0].issuer, chain[0].subject)
@@ -209,47 +210,39 @@ class MyTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.do_issue(csr=unicode_string)
 
+    def test_driver(self):
+        # Run the driver program to issue the certificate.
+        import subprocess
+        subprocess.check_call([
+            "python", "driver.py",
+            "--server", ACME_SERVER,
+            ] + domains + [
+                os.path.join(self.output_dir, 'driver_private.key'),
+                os.path.join(self.output_dir, 'driver_certificate.crt'),
+                self.challenges_dir,
+                self.account_dir,
+            ])
+
+        # Check that the private key was written.
+        self.assertTrue(os.path.exists(os.path.join(self.output_dir, 'driver_private.key')))
+
+        # Check that the certificate is valid.
+        cert = load_cert_chain(os.path.join(self.output_dir, 'driver_certificate.crt'))
+        self.assertEqual(len(cert), 2) # two elements in chain
+        cert_domains = get_certificate_domains(cert[0])
+        self.assertEqual(cert_domains[0], domains[0])
+        self.assertEqual(set(cert_domains), set(domains))
+
+        # Check that the chain is valid.
+        chain_names = get_certificate_domains(cert[1])
+        self.assertEqual(chain_names[0], 'happy hacker fake CA')
+
+        # Check that the certificate is signed by the first element in the chain.
+        self.assertEqual(cert[0].issuer, cert[1].subject)
 
 def load_cert_chain(pemfile):
-    # A certificate .pem file may contain a chain of certificates.
-    # Load the file and split them apart.
-    re_pem = r"(-+BEGIN (?:.+)-+[\r\n]+(?:[A-Za-z0-9+/=]{1,64}[\r\n]+)+-+END (?:.+)-+[\r\n]+)".encode("ascii") # for Py3, make bytes
-    with open(pemfile, "rb") as f:
-        pem = f.read() + b"\n" # ensure trailing newline
-        pemblocks = re.findall(re_pem, pem)
-        if len(pemblocks) == 0:
-            raise ValueError("File does not contain valid PEM data.")
-        return [load_pem(pem) for pem in pemblocks]
-
-
-def load_pem(pem):
-    # Parse a "---BEGIN .... END---" PEM string and return a Python object for it
-    # using classes from the cryptography package.
-    from cryptography.x509 import load_pem_x509_certificate
-    from cryptography.hazmat.backends import default_backend
-    pem_type = re.match(b"-+BEGIN (.*?)-+[\r\n]", pem)
-    if pem_type and pem_type.group(1) == b"CERTIFICATE":
-        return load_pem_x509_certificate(pem, default_backend())
-    raise ValueError("Unsupported PEM object type.")
-
-
-def get_certificate_domains(cert):
-    from cryptography.x509 import DNSName, ExtensionNotFound, OID_COMMON_NAME, OID_SUBJECT_ALTERNATIVE_NAME
-
-    cn = None
-    sans = set()
-
-    try:
-        cn = cert.subject.get_attributes_for_oid(OID_COMMON_NAME)[0].value
-    except IndexError:
-        pass
-
-    try:
-        sans = set(cert.extensions.get_extension_for_oid(OID_SUBJECT_ALTERNATIVE_NAME).value.get_values_for_type(DNSName))
-    except ExtensionNotFound:
-        pass
-
-    return (cn, sans)
+    from free_tls_certificates.utils import load_certificate
+    return load_certificate(pemfile, with_chain=True)
 
 def create_dv_server(challenges_dir):
     # We need a simple HTTP server to respond to
