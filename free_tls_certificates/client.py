@@ -131,6 +131,9 @@ def issue_certificate(
     elif not isinstance(csr, rsa.RSAPrivateKey):
         raise ValueError("csr must be None, a bytes instance containing a certificate signing request in PEM format, or a cryptography.hazmat.primitives.asymmetric.rsa.RSAPrivateKey instance (it is a %s)." % type(csr))
 
+    # Convert the OpenSSL.crypto.X509Req to a ComparableX509 expected by request_issuance.
+    csr = acme.jose.util.ComparableX509(csr)
+
     # Request a certificate using the CSR and some number of domain validation challenges.
     logger("Requesting a certificate.")
     try:
