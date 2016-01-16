@@ -583,7 +583,7 @@ def generate_csr_pyca(domains, key):
     csr = x509.CertificateSigningRequestBuilder().subject_name(x509.Name([
         x509.NameAttribute(NameOID.COMMON_NAME, domains[0]),
     ])).add_extension(
-        x509.SubjectAlternativeName([x509.DNSName(domain) for domain in domains[1:]]),
+        x509.SubjectAlternativeName([x509.DNSName(domain) for domain in domains]),
         critical=False,
     ).sign(key, hashes.SHA256(), default_backend())
     return csr
