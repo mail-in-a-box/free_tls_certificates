@@ -214,14 +214,14 @@ class MyTest(unittest.TestCase):
         # Run the driver program to issue the certificate.
         import subprocess
         subprocess.check_call([
-            "python", "driver.py",
+            sys.executable, "free_tls_certificates/driver.py",
             "--server", ACME_SERVER,
             ] + domains + [
                 os.path.join(self.output_dir, 'driver_private.key'),
                 os.path.join(self.output_dir, 'driver_certificate.crt'),
                 self.challenges_dir,
                 self.account_dir,
-            ])
+            ], env={ "PYTHONPATH": ".:" + ":".join(sys.path) })
 
         # Check that the private key was written.
         self.assertTrue(os.path.exists(os.path.join(self.output_dir, 'driver_private.key')))
