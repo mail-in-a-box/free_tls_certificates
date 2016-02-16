@@ -7,7 +7,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='free_tls_certificates',
-    version='0.1.2',
+    version='0.1.3',
     author=u'Joshua Tauberer',
     author_email=u'jt@occams.info',
     packages = find_packages(),
