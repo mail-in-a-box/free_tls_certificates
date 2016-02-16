@@ -245,6 +245,15 @@ is serving the file at %s.""" % (action.url, fn))
             continue
 
         ###########################################################################################
+        except client.ChallengeFailed as e:
+            # Although our local validation of the challenge succeeded, the ACME server
+            # sees it failing. That could be because DNS propagation is in progress and
+            # we see different servers, for instance. The next call to issue_certificate
+            # will request a new challenge so you can try again.
+            print(e)
+            sys.exit(1)
+
+        ###########################################################################################
         except client.RateLimited as e:
             # The ACME server is refusing to issue more certificates for a second-level domain
             # for your account.
