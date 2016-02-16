@@ -171,12 +171,8 @@ class MyTest(unittest.TestCase):
         with self.assertRaises(client.ChallengeFailed):
             self.do_issue(domains=["fail.le.wtf"], validation_method=vm)
 
-        # And on any future attempts, because the challenge is cached.
-        with self.assertRaises(client.ChallengeFailed) as cm:
-            self.do_issue(domains=["fail.le.wtf"], validation_method=vm)
-
-        # Clear the challenge from the cache so we get issued a new one.
-        client.forget_challenge(cm.exception.challenge_uri, self.account_dir)
+        # The failed challenge is removed from the cache so that further
+        # attempts from scratch aren't blocked.
 
         # Get a new challenge. Write the challenge response file.
         with self.assertRaises(client.NeedToTakeAction) as cm:

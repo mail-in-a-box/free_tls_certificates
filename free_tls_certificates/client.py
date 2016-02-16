@@ -59,7 +59,7 @@ def issue_certificate(
     # Where will we store our account cache?
     account_key_file = os.path.join(account_cache_directory, 'account.pem')
     registration_file = os.path.join(account_cache_directory, 'registration.json')
-    challenges_file = os.path.join(account_cache_directory, 'challenges.json') # also in forget_challenge
+    challenges_file = os.path.join(account_cache_directory, 'challenges.json')
 
     # Create the ACME client, making a new account & registration
     # if not set up yet.
@@ -455,10 +455,21 @@ def get_challenges(client, regr, domain, challenges_file, log):
                     raise AccountDataIsCorrupt(challenges_file)
                 raise
 
-            # Check that the refreshed record is still valid.
+            # Check that the refreshed record is not expired/revoked. Those
+            # aren't helpful. It might be "invalid", meaning a challenge
+            # failed. We'll percolate up an invalid challenge so the user
+            # gets a ChallengeFailed exception, but we'll also drop it from
+            # the cache so that it doesn't prevent further attempts to get
+            # a certificate from proceeding.
             if is_still_valid_challenge(challg):
-                # If so, keep it.
-                challenges[i] = challg
+                if challg.body.status.name != "invalid":
+                    # Update cache.
+                    challenges[i] = challg
+                else:
+                    # Drop from cache.
+                    challenges.pop(i)
+
+                # Stop loop here: Use this challenge.
                 break
     else:
         # None found.
@@ -523,16 +534,6 @@ def save_challenges_file(challenges, challenges_file):
     # Save new set of challenges.
     with open(challenges_file, 'w') as f:
         f.write(json.dumps([c.to_json() for c in challenges], sort_keys=True, indent=4))
-
-
-def forget_challenge(challenge_uri, account_cache_directory):
-    # Update the challenges cache file to drop the named challenge
-    # so that on future calls we ignore it, e.g. if it is in invalid
-    # state and we want to be issued a new challenge.
-    challenges_file = os.path.join(account_cache_directory, 'challenges.json') # also in issue_certificate
-    challenges = load_challenges_file(challenges_file)
-    challenges = [challg for challg in challenges if challg.uri != challenge_uri]
-    save_challenges_file(challenges, challenges_file)
 
 
 def answer_challenge_http(domain, chall, validation_method, client, account, challg_body, log):
