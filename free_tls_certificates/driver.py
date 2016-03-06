@@ -95,6 +95,8 @@ def stop_if_certificate_valid(opts):
     import idna
 
     if not os.path.exists(opts["certificate_fn"]):
+        if sys.stdin.isatty():
+           sys.stderr.write("Certificate file %s not present...\n" % opts["certificate_fn"])
         return
 
     def idna_encode(domain):
@@ -110,10 +112,15 @@ def stop_if_certificate_valid(opts):
 
     # If this is a self-signed certificate, provision a new one.
     if cert.issuer == cert.subject:
+        if sys.stdin.isatty():
+           sys.stderr.write("Replacing self-signed certificate...\n")
         return
-            
+
     # If this is expiring within 30 days, provision a new one.
-    if cert.not_valid_after - datetime.datetime.now() < datetime.timedelta(days=30):
+    expires_in = cert.not_valid_after - datetime.datetime.now()
+    if expires_in < datetime.timedelta(days=30):
+        if sys.stdin.isatty():
+           sys.stderr.write("Replacing expiring certificate (expires in %s)...\n" % str(expires_in))
         return
 
     # If the certificate is not valid for one of the domains we're requesting,
@@ -121,6 +128,11 @@ def stop_if_certificate_valid(opts):
     request_domains = set(idna_encode(domain) for domain in opts["domains"])
     cert_domains = set(get_certificate_domains(cert))
     if len(request_domains - cert_domains) > 0:
+        if sys.stdin.isatty():
+           sys.stderr.write("Certificate is not valid for %s (found %s)...\n" % (
+               ", ".join(x.decode('ascii') for x in (request_domains - cert_domains)),
+               ", ".join(x.decode('ascii') for x in cert_domains)
+               ))
         return
 
     # Certificate is valid for the requested domains - no need to provision.
@@ -243,15 +255,6 @@ is serving the file at %s.""" % (action.url, fn))
 
             # Try again.
             continue
-
-        ###########################################################################################
-        except client.ChallengeFailed as e:
-            # Although our local validation of the challenge succeeded, the ACME server
-            # sees it failing. That could be because DNS propagation is in progress and
-            # we see different servers, for instance. The next call to issue_certificate
-            # will request a new challenge so you can try again.
-            print(e)
-            sys.exit(1)
 
         ###########################################################################################
         except client.RateLimited as e:
