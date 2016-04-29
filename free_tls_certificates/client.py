@@ -55,7 +55,42 @@ def issue_certificate(
     # Make sure all domains are IDNA-encoded Py2 unicode/Py 3 str instances.
     # (Note that the IDNA library does not handle wildcards, but neither does ACME yet.)
     domains = [to_idna(domain) for domain in domains]
-    
+
+    # Validate domain ownership with Let's Encrypt.
+    (client, challenges) = validate_domain_ownership(domains, account_cache_directory,
+        agree_to_tos_url, validation_method, acme_server, logger)
+
+    # Domains are now validated. Generate a private key, CSR, and certificate.
+
+    # Load or generate a private key.
+    (private_key, private_key_pem) = generate_private_key(private_key, private_key_file, logger)
+
+    # Load or generate a certificate signing request.
+    (csr, csr_pem) = parse_or_generate_csr(domains, csr, private_key, logger)
+
+    # Issue a certificate.
+    (cert_pem, chain) = request_certificate_issuance(client, challenges, csr, logger)
+
+    # Save everything.
+    save_files(certificate_file, cert_pem, certificate_chain_file, chain, private_key_file, private_key_pem, logger)
+
+    # Return what we have.
+    return {
+        "private_key": private_key_pem,
+        "csr": csr_pem,
+        "cert": cert_pem,
+        "chain": chain,
+    }
+
+
+def validate_domain_ownership(
+        domains, account_cache_directory,
+        agree_to_tos_url,
+        validation_method,
+        acme_server,
+        logger,
+        ):
+
     # Where will we store our account cache?
     account_key_file = os.path.join(account_cache_directory, 'account.pem')
     registration_file = os.path.join(account_cache_directory, 'registration.json')
@@ -96,41 +131,59 @@ def issue_certificate(
     if wait_until_when is not None:
         raise WaitABit(wait_until_when)
 
-    # Domains are now validated. Generate a CSR.
+    return (client, challgs)
 
+
+def generate_private_key(private_key, private_key_file, logger):
     from cryptography.hazmat.backends import default_backend
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
 
+    # Read the private key in PEM format if private_key_file is not None and it
+    # specifies a file that exists.
     if private_key_file and os.path.exists(private_key_file):
         # Read private key from file.
         with open(private_key_file, "rb") as f:
             private_key = f.read()
+
     if private_key is None:
         # Generate a new private key if not given to us.
         logger("Generating a new private key.")
         private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
         private_key_pem = private_key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL, encryption_algorithm=serialization.NoEncryption())
+
     elif isinstance(private_key, bytes):
-        # Deserialize.
+        # Deserialize the key if given to us as a bytes string in PEM format.
         private_key_pem = private_key
         private_key = serialization.load_pem_private_key(private_key, password=None, backend=default_backend())
+
     elif not isinstance(private_key, rsa.RSAPrivateKey):
         raise ValueError("private_key must be None, a bytes instance containing a private key in PEM format, or a cryptography.hazmat.primitives.asymmetric.rsa.RSAPrivateKey instance (it is a %s)." % type(private_key))
 
+    return (private_key, private_key_pem)
+
+
+def parse_or_generate_csr(domains, csr, private_key, logger):
     # Create a CSR, if we don't have one already.
     if csr is None:
         logger("Generating a new certificate signing request.")
         (csr_pem, csr) = generate_csr(domains, private_key)
+
+    # Use the provided CSR from a bytes string.
     elif isinstance(csr, bytes):
         # TODO: Validate that the CSR specifies exactly the
         # same domains as the domains array? Let's Encrypt
         # will of course also check this for us.
         csr_pem = csr
         csr = OpenSSL.crypto.load_certificate_request(OpenSSL.crypto.FILETYPE_PEM, csr_pem)
-    elif not isinstance(csr, rsa.RSAPrivateKey):
-        raise ValueError("csr must be None, a bytes instance containing a certificate signing request in PEM format, or a cryptography.hazmat.primitives.asymmetric.rsa.RSAPrivateKey instance (it is a %s)." % type(csr))
 
+    else:
+        raise ValueError("csr must be None or a bytes instance containing a certificate signing request in PEM format (it is a %s)." % type(csr))
+
+    return (csr, csr_pem)
+
+
+def request_certificate_issuance(client, challgs, csr, logger):
     # Convert the OpenSSL.crypto.X509Req to a ComparableX509 expected by request_issuance.
     csr = acme.jose.util.ComparableX509(csr)
 
@@ -153,6 +206,10 @@ def issue_certificate(
     cert_pem = cert_to_pem(cert_response.body)
     chain = list(map(cert_to_pem, chain))
 
+    return (cert_pem, chain)
+
+
+def save_files(certificate_file, cert_pem, certificate_chain_file, chain, private_key_file, private_key_pem, logger):
     if certificate_file is not None:
         logger("Writing certificate to %s." % certificate_file)
         with open(certificate_file, 'wb') as f:
@@ -173,12 +230,6 @@ def issue_certificate(
         with open(private_key_file, "wb") as f:
             f.write(private_key_pem)
 
-    return {
-        "private_key": private_key_pem,
-        "csr": csr_pem,
-        "cert": cert_pem,
-        "chain": chain,
-    }
 
 def to_idna(domain):
     # If the domain is passed as a bytes object (alias for str in Python 2),
