@@ -7,6 +7,10 @@ A Simple Let's Encrypt (ACME) Client
 
 This module is based on the low-level `acme <https://github.com/letsencrypt/letsencrypt/tree/master/acme>`_ client library by the Let's Encrypt team.
 
+Installation::
+
+	pip install free_tls_certificates
+
 Prerequisites:
 
 * The Let's Encrypt `ACME client library <https://github.com/letsencrypt/letsencrypt/tree/master/acme>`_ and all of `its dependencies <https://github.com/letsencrypt/letsencrypt/blob/master/acme/setup.py#L9>`_.
