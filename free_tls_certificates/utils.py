@@ -34,19 +34,23 @@ def parse_pem_block(pem):
     return load_pem_x509_certificate(pem, default_backend())
 
 
+def get_certificate_cn(cert):
+    # Gets the certificate's common name.
+    from cryptography.x509 import OID_COMMON_NAME
+    return cert.subject.get_attributes_for_oid(OID_COMMON_NAME)[0].value
+
 def get_certificate_domains(cert):
     # Gets the common name and the subject alternative names in the
     # certificate. Returns a list of names, the CN first, all IDNA
     # encoded (i.e. in ASCII).
-    from cryptography.x509 import DNSName, ExtensionNotFound, OID_COMMON_NAME, OID_SUBJECT_ALTERNATIVE_NAME
+    from cryptography.x509 import DNSName, ExtensionNotFound, OID_SUBJECT_ALTERNATIVE_NAME
     import idna
 
     ret = []
 
     # Get the Subject Common Name (CN) (in IDNA ASCII).
     try:
-        cn = cert.subject.get_attributes_for_oid(OID_COMMON_NAME)[0].value
-        ret.append(cn)
+        ret.append(get_certificate_cn(cert))
     except IndexError:
         # No common name?
         pass

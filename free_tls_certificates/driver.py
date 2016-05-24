@@ -59,12 +59,18 @@ def parse_command_line():
     # Parse options.
     from free_tls_certificates.client import LETSENCRYPT_SERVER, LETSENCRYPT_STAGING_SERVER
     acme_server = LETSENCRYPT_SERVER
+    self_signed = False
     while True:
         if args[0] == "--server":
             args.pop(0)
             acme_server = args.pop(0)
             if acme_server == "staging":
                 acme_server = LETSENCRYPT_STAGING_SERVER
+            continue
+        if args[0] == "--self-signed":
+            args.pop(0)
+            self_signed = True
+            acme_server = "https://domain.invalid" # should be ignored
             continue
         break
 
@@ -87,6 +93,7 @@ def parse_command_line():
         "certificate_fn": certificate_fn,
         "static_path": os.path.join(static_path, '.well-known', 'acme-challenge'),
         "acme_account_path": acme_account_path,
+        "self_signed": self_signed,
     }
 
 
@@ -110,8 +117,9 @@ def stop_if_certificate_valid(opts):
     from free_tls_certificates.utils import load_certificate, get_certificate_domains
     cert = load_certificate(opts["certificate_fn"])
 
-    # If this is a self-signed certificate, provision a new one.
-    if cert.issuer == cert.subject:
+    # If this is a self-signed certificate (and the user is seeking
+    # a real one), provision a new one.
+    if cert.issuer == cert.subject and not opts["self_signed"]:
         if sys.stdin.isatty():
            sys.stderr.write("Replacing self-signed certificate...\n")
         return
@@ -162,6 +170,7 @@ def provision_certificate(opts):
                 private_key_file=opts["private_key_fn"],
                 agree_to_tos_url=agree_to_tos_url,
                 acme_server=opts["acme_server"],
+                self_signed=opts["self_signed"],
                 logger=logger)
 
             # A certificate was provisioned!

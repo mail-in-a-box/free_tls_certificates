@@ -48,6 +48,7 @@ def issue_certificate(
         certificate_file=None,
         certificate_chain_file=APPEND_CHAIN,
         private_key=None, private_key_file=None, csr=None,
+        self_signed=None,
         acme_server=LETSENCRYPT_SERVER,
         logger=lambda s : None,
         ):
@@ -56,20 +57,26 @@ def issue_certificate(
     # (Note that the IDNA library does not handle wildcards, but neither does ACME yet.)
     domains = [to_idna(domain) for domain in domains]
 
-    # Validate domain ownership with Let's Encrypt.
-    (client, challenges) = validate_domain_ownership(domains, account_cache_directory,
-        agree_to_tos_url, validation_method, acme_server, logger)
+    if not self_signed:
+        # Validate domain ownership with Let's Encrypt. (Skip if generating a
+        # self-signed certificate.)
+        (client, challenges) = validate_domain_ownership(domains, account_cache_directory,
+            agree_to_tos_url, validation_method, acme_server, logger)
 
     # Domains are now validated. Generate a private key, CSR, and certificate.
 
     # Load or generate a private key.
     (private_key, private_key_pem) = generate_private_key(private_key, private_key_file, logger)
 
-    # Load or generate a certificate signing request.
-    (csr, csr_pem) = parse_or_generate_csr(domains, csr, private_key, logger)
+    if not self_signed:
+        # Load or generate a certificate signing request.
+        (csr, csr_pem) = parse_or_generate_csr(domains, csr, private_key, logger)
 
-    # Issue a certificate.
-    (cert_pem, chain) = request_certificate_issuance(client, challenges, csr, logger)
+        # Issue a certificate.
+        (cert_pem, chain) = request_certificate_issuance(client, challenges, csr, logger)
+    else:
+        # Generate a self-signed certificate.
+        (cert_pem, chain) = issue_self_signed_certificate(domains, private_key, logger)
 
     # Save everything.
     save_files(certificate_file, cert_pem, certificate_chain_file, chain, private_key_file, private_key_pem, logger)
@@ -77,7 +84,6 @@ def issue_certificate(
     # Return what we have.
     return {
         "private_key": private_key_pem,
-        "csr": csr_pem,
         "cert": cert_pem,
         "chain": chain,
     }
@@ -201,12 +207,14 @@ def request_certificate_issuance(client, challgs, csr, logger):
 
     # cert_response.body and chain now hold OpenSSL.crypto.X509 objects.
     # Convert them to PEM format.
-    def cert_to_pem(cert):
-        return OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
     cert_pem = cert_to_pem(cert_response.body)
     chain = list(map(cert_to_pem, chain))
 
     return (cert_pem, chain)
+
+
+def cert_to_pem(cert):
+    return OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, cert)
 
 
 def save_files(certificate_file, cert_pem, certificate_chain_file, chain, private_key_file, private_key_pem, logger):
@@ -651,3 +659,46 @@ def generate_csr(domains, key):
     csr = OpenSSL.crypto.load_certificate_request(OpenSSL.crypto.FILETYPE_PEM, csr_pem)
     return (csr_pem, csr)
 
+def issue_self_signed_certificate(domains, private_key, logger):
+    # Generates a self-signed certificate.
+    from cryptography import x509
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.x509.oid import NameOID
+    from cryptography.x509 import DNSName
+    import datetime
+    import uuid
+
+    logger("Issuing self-signed certificate.")
+
+    import sys
+    if sys.version_info < (3,):
+        # In Py2, pyca requires the CN to be a unicode instance.
+        domains = [domain.decode("ascii") for domain in domains]
+
+    # https://cryptography.io/en/latest/x509/reference/
+    one_day = datetime.timedelta(days=1)
+    duration = datetime.timedelta(days=31)
+    builder = x509.CertificateBuilder()
+    builder = builder.subject_name(x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, domains[0]),
+    ]))
+    builder = builder.issuer_name(x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, domains[0]),
+    ]))
+    builder = builder.not_valid_before(datetime.datetime.today() - one_day)
+    builder = builder.not_valid_after(datetime.datetime.today() + duration)
+    builder = builder.serial_number(int(uuid.uuid4()))
+    builder = builder.public_key(private_key.public_key())
+    builder = builder.add_extension(
+        x509.BasicConstraints(ca=False, path_length=None), critical=True,
+    )
+    if len(domains) > 1:
+        builder = builder.add_extension(x509.SubjectAlternativeName([
+            x509.DNSName(domain) for domain in domains]), critical=False)
+    certificate = builder.sign(
+        private_key=private_key, algorithm=hashes.SHA256(),
+        backend=default_backend()
+    )
+
+    return (cert_to_pem(certificate), []) # no chain

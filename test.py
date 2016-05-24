@@ -206,35 +206,78 @@ class MyTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.do_issue(csr=unicode_string)
 
-    def test_driver(self):
+    def test_self_signed(self):
+        self.do_issue(domains=["selfsigned.le.wtf", "www.selfsigned.le.wtf"], self_signed=True)
+
+        from free_tls_certificates.utils import load_certificate, get_certificate_cn, get_certificate_domains
+        cert = load_certificate(os.path.join(self.output_dir, "certificate.crt"))
+        self.assertEqual(cert.issuer, cert.subject)
+        self.assertEqual(get_certificate_cn(cert), "selfsigned.le.wtf")
+        self.assertEqual(set(get_certificate_domains(cert)), set(["selfsigned.le.wtf", "www.selfsigned.le.wtf"]))
+
+    def test_driver(self, self_signed=False):
         # Run the driver program to issue the certificate.
+
+        # Make sure no certificate file already exists.
+        cert_fn = os.path.join(self.output_dir, 'driver_certificate.crt')
+        if os.path.exists(cert_fn):
+            os.unlink(cert_fn)
+
+        # Run the driver.
         import subprocess
-        subprocess.check_call([
-            sys.executable, "free_tls_certificates/driver.py",
-            "--server", ACME_SERVER,
-            ] + domains + [
-                os.path.join(self.output_dir, 'driver_private.key'),
-                os.path.join(self.output_dir, 'driver_certificate.crt'),
-                self.challenges_dir,
-                self.account_dir,
-            ], env={ "PYTHONPATH": ".:" + ":".join(sys.path) })
+        def execute_driver_app():
+            if not self_signed:
+                args = ["--server", ACME_SERVER]
+            else:
+                args = ["--self-signed"]
+            subprocess.check_call(
+                [
+                    sys.executable, "free_tls_certificates/driver.py",
+                ]
+                + args
+                + domains
+                + [
+                    os.path.join(self.output_dir, 'driver_private.key'),
+                    os.path.join(self.output_dir, 'driver_certificate.crt'),
+                    self.challenges_dir,
+                    self.account_dir,
+                ], env={ "PYTHONPATH": ".:" + ":".join(sys.path) })
+        execute_driver_app()
 
         # Check that the private key was written.
         self.assertTrue(os.path.exists(os.path.join(self.output_dir, 'driver_private.key')))
 
         # Check that the certificate is valid.
-        cert = load_cert_chain(os.path.join(self.output_dir, 'driver_certificate.crt'))
-        self.assertEqual(len(cert), 2) # two elements in chain
+        cert = load_cert_chain(cert_fn)
+        if not self_signed:
+            self.assertEqual(len(cert), 2) # two elements in chain
+        else:
+            self.assertEqual(len(cert), 1) # no chain, just the cert
         cert_domains = get_certificate_domains(cert[0])
         self.assertEqual(cert_domains[0], domains[0])
         self.assertEqual(set(cert_domains), set(domains))
 
-        # Check that the chain is valid.
-        chain_names = get_certificate_domains(cert[1])
-        self.assertEqual(chain_names[0], 'happy hacker fake CA')
+        if not self_signed:
+            # Check that the chain is valid.
+            chain_names = get_certificate_domains(cert[1])
+            self.assertEqual(chain_names[0], 'happy hacker fake CA')
 
-        # Check that the certificate is signed by the first element in the chain.
-        self.assertEqual(cert[0].issuer, cert[1].subject)
+            # Check that the certificate is signed by the first element in the chain.
+            self.assertEqual(cert[0].issuer, cert[1].subject)
+        else:
+            # Check that the certificate is actually self-signed.
+            from free_tls_certificates.utils import load_certificate
+            cert = load_certificate(cert_fn)
+            self.assertEqual(cert.issuer, cert.subject)
+
+        # Run the driver again --- this time it should say that the certificate
+        # exists and is valid and exits with a return code of 3.
+        with self.assertRaises(subprocess.CalledProcessError) as cm:
+            execute_driver_app()
+        self.assertEqual(cm.exception.returncode, 3)
+
+    def test_driver_selfsigned(self):
+        self.test_driver(self_signed=True)
 
 def load_cert_chain(pemfile):
     from free_tls_certificates.utils import load_certificate
