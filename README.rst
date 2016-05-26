@@ -1,37 +1,95 @@
 A Simple Let's Encrypt (ACME) Client
 ====================================
 
-**This is a work in progress!**
+``free_tls_certificates`` is a Python 2/3 client library and command-line client for `Let's Encrypt <https://letsencrypt.org/>`_ (or any `ACME <https://github.com/letsencrypt/acme-spec>`_ server) to automatically provision `TLS <https://en.wikipedia.org/wiki/Transport_Layer_Security>`_ certificates (aka SSL certificates).
 
-``free_tls_certificates`` is a Python 2/3 client library for `Let's Encrypt <https://letsencrypt.org/>`_ or any ACME server that issues `TLS <https://en.wikipedia.org/wiki/Transport_Layer_Security>`_ certificates (aka SSL certificates). The purpose of this library is to make it easier to embed Let's Encrypt within server provisioning applications without resorting to shelling out the ``letsencrypt`` command line client.
+The purpose of this library is to make it easier to embed Let's Encrypt within server provisioning applications without resorting to shelling out `certbot <https://certbot.eff.org>`_ as root. You can also use this library as a command-line client like certbot, but it does not require root privs to run. Instead, you are responsible for having a web server running.
 
-This module is based on the low-level `acme <https://github.com/letsencrypt/letsencrypt/tree/master/acme>`_ client library by the Let's Encrypt team.
+Installation
+------------
 
-Installation::
-
-	pip install free_tls_certificates
-
-Prerequisites:
-
-* The Let's Encrypt `ACME client library <https://github.com/letsencrypt/letsencrypt/tree/master/acme>`_ and all of `its dependencies <https://github.com/letsencrypt/letsencrypt/blob/master/acme/setup.py#L9>`_.
-* The ``idna`` module (https://github.com/kjd/idna).
-* The ``cryptography`` module (https://github.com/pyca/cryptography) and its dependencies (on Ubuntu: ``sudo apt-get install build-essential libssl-dev libffi-dev python3-dev``).
-
-Usage:
-
-The file `driver.py <free_tls_certificates/driver.py>`_ contains a complete, working example for how to use this client library. It is also a convenient command-line tool for provisioning a certificate, which after pip-installing the package becomes available as ``free_tls_certificate``.
-
-From the command line::
+``free_tls_certificates`` can be installed via pip but it requires some of its dependencies' binary dependencies to be installed first. On Ubuntu (and using Python 3 as an example)::
 
     sudo apt-get install build-essential libssl-dev libffi-dev python3-dev python3-pip
     sudo pip3 install free_tls_certificates
-    free_tls_certificate domain-name-1.com [domain-name-2.com ...] private.key certificate.crt /path/to/website /path/to/acme/storage
 
-See `driver.py <free_tls_certificates/driver.py>`_ for complete documentation.
+The dependencies that pip will install are:
 
-Here's basically how it works:
+* Let's Encrypt's low-level `ACME client library <https://github.com/letsencrypt/letsencrypt/tree/master/acme>`_ and all of `its dependencies <https://github.com/letsencrypt/letsencrypt/blob/master/acme/setup.py#L9>`_.
+* `idna <https://github.com/kjd/idna>`_ by kjd.
+* `cryptography <https://github.com/pyca/cryptography>`_ and its dependencies (on Ubuntu: ``sudo apt-get install build-essential libssl-dev libffi-dev python3-dev``).
 
-Example::
+Command-Line Usage
+------------------
+
+The command-line tool ``free_tls_certificate`` (which becomes available after pip-installing ``free_tls_certificates``, which has an ``s``) can be used to automatically provision a TLS certificate from Let's Encrypt or generate a self-signed certificate.
+
+To provision a TLS certificate from Let's Encrypt, you will need to have a web server already running on port 80 (not 443 --- domain validation only works on port 80) and access to its static root from the machine you are going to run ``free_tls_certificates`` on.
+
+Run::
+
+    free_tls_certificate domain-name-1.com [domain-name-2.com ...] /path/to/private.key /path/to/certificate.crt /path/to/website /path/to/acme/storage
+
+On the first run:
+
+* A new 2048-bit RSA private key will be generated and saved in ``/path/to/private.key``, unless a file exists at that path, in which case that private key will be used.
+
+* You'll be prompted to accept the Let's Encrypt terms of service. A new ACME account will be created and maintained for you in ``/path/to/acme/storage``.
+
+* An ACME HTTP01 challenge will be requested, a domain ownership verification file will be installed in ``/path/to/website/.well-known/acme-challenge/...``, and when the certificate is ready it will be written to ``/path/to/certificate.crt``.
+
+Subsequent runs will be headless and will just do the right thing:
+
+* If certificate file specified exists and is valid for the domains given for at least 30 days, the tool will exit without doing anything (with exit code ``3``). 
+
+* If the certificate file doesn't exist, isn't valid for all of the domains given, is self-signed, or is expiring within 30 days, a new certificate will be issued and the certificate file will be overwritten. (You are responsible for then restarting your web server so it sees the new certificate.)
+
+Since the tool will only issue a new certificate when needed, you can run the tool in a nightly cron job to keep your certificate valid.
+
+You can also use the tool to generate a self-signed certificate. This is handy when spinning up a new machine: Your web server probably won't start until you have a certificate file in place, but you can't get a certificate until your web server is running.
+
+To get a self-signed certificate, just add ``--self-signed``::
+
+    free_tls_certificate --self-signed domain-name-1.com [domain-name-2.com ...] /path/to/private.key /path/to/certificate.crt
+
+Web Server Support
+------------------
+
+You need to have a web server running that is serving a directory of static files that ``free_tls_certificate`` can write to. It must serve the files over HTTP (port 80) as ACME domain validation does not occur over HTTPS.
+
+You might want to use an ``nginx`` configuration like this (or the equivalent for your web stack)::
+
+    server {
+        listen 80 default;
+        location / {
+            # Redirect to HTTPS.
+            return 301 https://$host$request_uri;
+        }
+        location /.well-known/acme-challenge/ {
+            # Serve the Let's Encrypt challenge path (must be
+            # over HTTP, not HTTPS).
+            root /home/ubuntu/public_html;
+        }
+    }
+
+    server {
+        listen 443 ssl http2;
+        server_name domin-name-1.com;
+        ssl_certificate /path/to/certificate.crt;
+        ssl_certificate_key /path/to/private.key;
+        ... your other directives here...
+    }
+
+In this case, your ``/path/to/website`` would be ``/home/ubuntu/public_html``.
+
+Usage as Python Module
+----------------------
+
+The file `driver.py <free_tls_certificates/driver.py>`_ contains a complete, working example for how to use this client library. It is the code behind the ``free_tls_certificate`` command-line tool.
+
+See `driver.py <free_tls_certificates/driver.py>`_ for complete documentation. There are a number of edge cases to handle.
+
+Here's basically how it works. You would adapt this code for your server provisioning tool::
 
     import requests.exceptions
     import acme.messages
@@ -63,14 +121,18 @@ Example::
         import datetime
         print ("Try again in %s." % (e.until_when - datetime.datetime.now()))
 
-But see the full driver file for all of the error conditions you need to handle.
+But see the full driver file for all of the error conditions you need to handle!
+
 
 Usage Notes
 -----------
 
-You may use any Python string type (``str``, ``bytes``, ``unicode``) to pass domain names. If a domain is internationalized, use Python 2 ``unicode`` and Python 3 ``str`` instances to pass the Unicode form of the domain name. If the string is already IDNA-encoded (i.e. punycode), you may use any string type.
+You can request a certificate for multiple domains at once, probably up to 100 (which is Let's Encrypt's current maximum). The first domain you specify will be put into the certificate's "common name" field, and all will be put into the certificate's Subject Alternative Name (SAN) extension. (All modern browsers accept SAN domains.)
 
 Note that Let's Encrypt doesn't yet (at the time of writing) support issuing certificates for internationalized domains.
+
+You may use any Python string type (``str``, ``bytes``, ``unicode``) to pass domain names. If a domain is internationalized, use Python 2 ``unicode`` and Python 3 ``str`` instances to pass the Unicode form of the domain name. If the string is already IDNA-encoded (i.e. punycode), you may use any string type.
+
 
 Testing
 --------
