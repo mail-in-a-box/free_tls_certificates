@@ -53,10 +53,10 @@ import datetime
 def parse_command_line():
     # Drop the 0th arg which is the program name. Sanity check.
     args = sys.argv[1:]
-    if len(args) < 5:
+    if len(args) < 3:
         raise Exception("Not enough command-line arguments.")
 
-    # Parse options.
+    # Parse optional options.
     from free_tls_certificates.client import LETSENCRYPT_SERVER, LETSENCRYPT_STAGING_SERVER
     acme_server = LETSENCRYPT_SERVER
     self_signed = False
@@ -74,16 +74,35 @@ def parse_command_line():
             continue
         break
 
-    # Split remaining arguments.
-    domains = args[0:-4]
-    private_key_fn, certificate_fn, static_path, acme_account_path = args[-4:]
+    # Get the ACME arguments.
+    if not self_signed:
+        if len(args) < 2:
+            raise Exception("Not enough command-line arguments.")
+        
+        acme_account_path = args.pop(-1)
+        static_path = args.pop(-1)
 
-    # Create account storage directory if necessary.
-    try:
-        os.makedirs(acme_account_path)
-    except OSError:
-        # directory already exists
-        pass
+        # Add .well-known/acme-challenge to what is given on the command-line.
+        static_path = os.path.join(static_path, '.well-known', 'acme-challenge')
+
+        # Create account storage directory if necessary.
+        try:
+            os.makedirs(acme_account_path)
+        except OSError:
+            # directory already exists
+            pass
+
+    else:
+        # If we're just generating a self-signed certificate, then
+        # these aren't used.
+        acme_account_path = None
+        static_path = None
+
+    # Split remaining arguments.
+    if len(args) < 3:
+        raise Exception("Not enough command-line arguments.")
+    domains = args[0:-2]
+    private_key_fn, certificate_fn = args[-2:]
 
     # Return options.
     return {
@@ -91,7 +110,7 @@ def parse_command_line():
         "domains": domains,
         "private_key_fn": private_key_fn,
         "certificate_fn": certificate_fn,
-        "static_path": os.path.join(static_path, '.well-known', 'acme-challenge'),
+        "static_path": static_path,
         "acme_account_path": acme_account_path,
         "self_signed": self_signed,
     }

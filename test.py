@@ -239,9 +239,12 @@ class MyTest(unittest.TestCase):
                 + [
                     os.path.join(self.output_dir, 'driver_private.key'),
                     os.path.join(self.output_dir, 'driver_certificate.crt'),
+                  ]
+                + ([
                     self.challenges_dir,
                     self.account_dir,
-                ], env={ "PYTHONPATH": ".:" + ":".join(sys.path) })
+                   ] if not self_signed else [])
+                , env={ "PYTHONPATH": ".:" + ":".join(sys.path) })
         execute_driver_app()
 
         # Check that the private key was written.
