@@ -36,13 +36,15 @@ On the first run:
 
 * You'll be prompted to accept the Let's Encrypt terms of service. A new ACME account will be created and maintained for you in ``/path/to/acme/storage``.
 
-* An ACME HTTP01 challenge will be requested, a domain ownership verification file will be installed in ``/path/to/website/.well-known/acme-challenge/...``, and when the certificate is ready it will be written to ``/path/to/certificate.crt``.
+* An ACME HTTP01 challenge will be requested, a domain ownership verification file will be installed in ``/path/to/website/.well-known/acme-challenge/...``, and it will wait until a certificate is ready.
+
+* When the certificate is ready, the certificate _plus_ the certificate chain will be written to ``/path/to/certificate.crt`` (the certificate is written first, just as `nginx` would expect).
 
 Subsequent runs will be headless and will just do the right thing:
 
 * If certificate file specified exists and is valid for the domains given for at least 30 days, the tool will exit without doing anything (with exit code ``3``). 
 
-* If the certificate file doesn't exist, isn't valid for all of the domains given, is self-signed, or is expiring within 30 days, a new certificate will be issued and the certificate file will be overwritten. (You are responsible for then restarting your web server so it sees the new certificate.)
+* If the certificate file doesn't exist, isn't valid for all of the domains given, is self-signed, or is expiring within 30 days, a new certificate will be issued and the certificate file will be overwritten with the new certificate (and chain). (You are responsible for then restarting your web server so it sees the new certificate.)
 
 Since the tool will only issue a new certificate when needed, you can run the tool in a nightly cron job to keep your certificate valid.
 
