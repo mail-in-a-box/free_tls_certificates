@@ -60,6 +60,7 @@ def parse_command_line():
     from free_tls_certificates.client import LETSENCRYPT_SERVER, LETSENCRYPT_STAGING_SERVER
     acme_server = LETSENCRYPT_SERVER
     self_signed = False
+    append_well_known_acme_challenge = True
     while True:
         if args[0] == "--server":
             args.pop(0)
@@ -72,6 +73,10 @@ def parse_command_line():
             self_signed = True
             acme_server = "https://domain.invalid" # should be ignored
             continue
+        if args[0] == "--is-well-known-path":
+            args.pop(0)
+            append_well_known_acme_challenge = False
+            continue
         break
 
     # Get the ACME arguments.
@@ -82,8 +87,9 @@ def parse_command_line():
         acme_account_path = args.pop(-1)
         static_path = args.pop(-1)
 
-        # Add .well-known/acme-challenge to what is given on the command-line.
-        static_path = os.path.join(static_path, '.well-known', 'acme-challenge')
+        if append_well_known_acme_challenge:
+            # Add .well-known/acme-challenge to what is given on the command-line.
+            static_path = os.path.join(static_path, '.well-known', 'acme-challenge')
 
         # Create account storage directory if necessary.
         try:
