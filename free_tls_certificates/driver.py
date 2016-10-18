@@ -163,8 +163,8 @@ def stop_if_certificate_valid(opts):
     if len(request_domains - cert_domains) > 0:
         if sys.stdin.isatty():
            sys.stderr.write("Certificate is not valid for %s (found %s)...\n" % (
-               ", ".join(x.decode('ascii') for x in (request_domains - cert_domains)),
-               ", ".join(x.decode('ascii') for x in cert_domains)
+               ", ".join(request_domains - cert_domains),
+               ", ".join(cert_domains)
                ))
         return
 
